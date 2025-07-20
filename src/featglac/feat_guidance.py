@@ -319,34 +319,3 @@ class FeatureGuidance:
         else:
             edited_img = results
             return edited_img, depth
-    
-
-    def mpi_nvs_blending(
-            self, depth: torch.Tensor, prompt: str,
-            mpi_masks:torch.Tensor,
-            null_text_emb: torch.Tensor, init_noise: torch.Tensor, 
-            activations: List[torch.Tensor],
-            fg_weight: float = None, bg_weight: float = None, use_input_depth_normalization=False,
-            correspondence_points: torch.Tensor = None):
-
-        # fg_mask = mpi_masks[0]
-        # correspondences = np.where(fg_mask == 1)
-        # corr_y, corr_x = correspondences[0], correspondences[1]
-        # corr_x, corr_y = torch.tensor(corr_x), torch.tensor(corr_y)
-        correspondences = torch.stack(correspondence_points, dim=-1)
-
-        with torch.no_grad():
-            results = self.diffuser.guided_mpi_nvs_inference(
-                latents=init_noise, depth=depth, uncond_embeddings=null_text_emb,
-                prompt=prompt,
-                activations_orig=activations,
-                correspondences=correspondences,
-                fg_weight=fg_weight, bg_weight=bg_weight,
-                save_denoising_steps=self.conf.guided_diffuser.save_denoising_steps)
-
-        if self.conf.guided_diffuser.save_denoising_steps:
-            edited_img, denoising_steps = results
-            return edited_img, depth, denoising_steps
-        else:
-            edited_img = results
-            return edited_img, depth
