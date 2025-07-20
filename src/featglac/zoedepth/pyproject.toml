@@ -1,0 +1,26 @@
+[build-system]
+requires = ["poetry-core>=1.4.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "zoedepth"
+version = "0.1.0"
+description = "ZoeDepth: Combining relative and metric depth"
+documentation = "https://github.com/paulguerrero/ZoeDepth"
+repository = "https://github.com/paulguerrero/ZoeDepth"
+authors = [
+    "Shariq Farooq Bhat",
+    "Reiner Birkl",
+    "Diana Wofk",
+    "Peter Wonka",
+    "Matthias Müller",
+    ]
+
+[tool.poetry.dependencies]
+python = ">=3.9 , <3.11"
+torch = ">=2.0"
+numpy = ">=1.24.1"
+torchvision = ">=0.14.1"
+timm = "0.6.12"
+tqdm = ">=4.64.1"
+midas = { git = "https://github.com/paulguerrero/MiDaS" }
