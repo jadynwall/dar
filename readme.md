@@ -1,6 +1,7 @@
 <p align="center">
 
   <h2 align="center">Zero shot Depth aware editing using Diffusion models</h2>
+  <h2 align="center">[ICCV 2025]</h2>
   <p align="center">
     <a href="https://rishubhpar.github.io/"><strong>Rishubh Parihar</strong></a>
     ·
