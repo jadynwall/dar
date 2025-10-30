@@ -62,6 +62,37 @@ python run_inference_object_placement.py
 python inference_scene_composition.py
 ```
 
+## Docker
+We provide a Docker Compose setup that builds the Conda environment from `environment.yml`, mounts your local repository, and caches large Torch Hub downloads.
+
+`docker/` contents:
+- `Dockerfile` builds the Micromamba-based image and reproduces the `depthedit` environment.
+- `docker-compose.yaml` defines the `dar` service, mounts the repo and `.docker_cache`, and exposes port `7860`.
+- `run_gradio.sh` chooses which Gradio script to launch via `GRADIO_DEMO`.
+
+Build the image (rerun if dependencies or the Dockerfile change):
+```bash
+docker compose -f docker/docker-compose.yaml build
+```
+
+### Interactive Shell
+Drop into a container shell (repo mounted at `/workspace`):
+```bash
+docker compose -f docker/docker-compose.yaml run --rm dar bash
+```
+From there you can run scripts such as `bash download_weights.sh` or launch the demos manually.
+
+### Gradio Demo via Docker Compose
+Start the default Gradio UI (scene composition) on <http://localhost:7860>:
+```bash
+docker compose -f docker/docker-compose.yaml up
+```
+Switch to the object placement demo by overriding `GRADIO_DEMO`:
+```bash
+GRADIO_DEMO=object_placement docker compose -f docker/docker-compose.yaml up
+```
+Model caches persist under `.docker_cache/` (create it once with `mkdir -p .docker_cache`) so large downloads happen only once.
+
 ## Gradio demo 
 Currently, we suport local gradio demo for both object placement and scene composition inference. To launch it run the correspondint scripts: 
 

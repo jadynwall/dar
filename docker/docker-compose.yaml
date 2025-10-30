@@ -1,0 +1,15 @@
+services:
+  dar:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    platform: linux/amd64
+    ports:
+      - "7860:7860"
+    environment:
+      - GRADIO_DEMO=object_placement
+      - GRADIO_SERVER_NAME=0.0.0.0
+      - GRADIO_SERVER_PORT=7860
+    volumes:
+      - ..:/workspace:rw
+      - ../.docker_cache:/root/.cache/torch/hub:rw
