@@ -94,6 +94,10 @@ resource "google_compute_instance" "vscode_gpu" {
 
     chmod 777 "$${MOUNT_POINT}"
 
+    if [[ -f "$${MOUNT_POINT}/bin/miniconda3/etc/profile.d/conda.sh" ]]; then
+      source "$${MOUNT_POINT}/bin/miniconda3/etc/profile.d/conda.sh"
+    fi
+
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y ubuntu-drivers-common libgl1 libglib2.0-0 wget
