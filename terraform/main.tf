@@ -32,6 +32,7 @@ resource "google_compute_instance" "vscode_gpu" {
   boot_disk {
     initialize_params {
       image = "projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts"
+      size  = 50
     }
   }
 
@@ -95,7 +96,9 @@ resource "google_compute_instance" "vscode_gpu" {
 
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y libgl1 libglib2.0-0 wget
+    apt-get install -y ubuntu-drivers-common libgl1 libglib2.0-0 wget
+    apt-get install -y nvidia-driver-535-server nvidia-utils-535-server
+    nvidia-smi || true
   EOT
 }
 
