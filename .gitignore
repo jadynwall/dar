@@ -150,3 +150,7 @@ dmypy.json
 .pyre/
 
 .*
+
+# Terraform
+*.tfstate
+*.tfstate.*

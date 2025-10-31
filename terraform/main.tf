@@ -16,7 +16,8 @@ provider "google" {
 }
 
 locals {
-  perma_disk_name = "perma-disk"
+  perma_disk_name       = "perma-disk"
+  perma_disk_mount_path = "/mnt/perma"
 }
 
 resource "google_compute_instance" "vscode_gpu" {
@@ -58,6 +59,44 @@ resource "google_compute_instance" "vscode_gpu" {
     automatic_restart   = true
     preemptible         = false
   }
+
+  metadata_startup_script = <<-EOT
+    #!/bin/bash
+    set -euo pipefail
+
+    DISK_BY_ID="/dev/disk/by-id/google-${local.perma_disk_name}"
+    MOUNT_POINT="${local.perma_disk_mount_path}"
+
+    for attempt in $(seq 1 10); do
+      if [[ -e "$${DISK_BY_ID}" ]]; then
+        break
+      fi
+      sleep 5
+    done
+
+    if [[ ! -e "$${DISK_BY_ID}" ]]; then
+      logger "perma-disk: $${DISK_BY_ID} not found; skipping mount"
+      exit 0
+    fi
+
+    if ! blkid "$${DISK_BY_ID}" >/dev/null 2>&1; then
+      mkfs.ext4 -F "$${DISK_BY_ID}"
+    fi
+
+    mkdir -p "$${MOUNT_POINT}"
+
+    if ! grep -qs "$${DISK_BY_ID}" /etc/fstab; then
+      echo "$${DISK_BY_ID} $${MOUNT_POINT} ext4 discard,defaults,nofail 0 2" >> /etc/fstab
+    fi
+
+    mountpoint -q "$${MOUNT_POINT}" || mount "$${MOUNT_POINT}"
+
+    chmod 777 "$${MOUNT_POINT}"
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y libgl1 libglib2.0-0 wget
+  EOT
 }
 
 resource "google_compute_disk" "perma_disk" {
