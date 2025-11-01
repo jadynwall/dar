@@ -19,7 +19,7 @@ variable "zone" {
 variable "machine_type" {
   description = "Compute Engine machine type that provides at least 16GB memory."
   type        = string
-  default     = "g2-standard-4"
+  default     = "g2-standard-8"
 }
 
 variable "gpu_type" {
