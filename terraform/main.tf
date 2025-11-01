@@ -93,24 +93,13 @@ resource "google_compute_instance" "vscode_gpu" {
     mountpoint -q "$${MOUNT_POINT}" || mount "$${MOUNT_POINT}"
 
     chmod 777 "$${MOUNT_POINT}"
-    export PATH="$${MOUNT_POINT}/bin:$PATH"
-
-    BASHRC_PATH="$${HOME}/.bashrc"
-    touch "$${BASHRC_PATH}"
-    if ! grep -Fqs "$${MOUNT_POINT}/bin" "$${BASHRC_PATH}"; then
-      echo "export PATH=\"$${MOUNT_POINT}/bin:\$PATH\"" >> "$${BASHRC_PATH}"
-    fi
-
-    if [[ -f "$${MOUNT_POINT}/bin/miniconda3/etc/profile.d/conda.sh" ]]; then
-      source "$${MOUNT_POINT}/bin/miniconda3/etc/profile.d/conda.sh"
-    fi
-
+    
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y ubuntu-drivers-common libgl1 libglib2.0-0 wget
     apt-get install -y nvidia-driver-535-server nvidia-utils-535-server
     nvidia-smi || true
-  EOT
+  EOT 
 }
 
 resource "google_compute_disk" "perma_disk" {
