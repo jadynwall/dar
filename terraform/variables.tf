@@ -19,13 +19,13 @@ variable "zone" {
 variable "machine_type" {
   description = "Compute Engine machine type that provides at least 16GB memory."
   type        = string
-  default     = "n1-highmem-4"
+  default     = "g2-standard-4"
 }
 
 variable "gpu_type" {
   description = "GPU accelerator type to attach."
   type        = string
-  default     = "nvidia-tesla-t4"
+  default     = "nvidia-l4"
 }
 
 variable "perma_disk_size_gb" {
