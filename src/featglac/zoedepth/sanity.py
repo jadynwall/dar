@@ -33,7 +33,7 @@ from zoedepth.utils.config import get_config
 from pprint import pprint
 
 
-torch.hub.help("intel-isl/MiDaS", "DPT_BEiT_L_384", force_reload=True) 
+torch.hub.help("intel-isl/MiDaS", "DPT_BEiT_L_384", force_reload=True)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 if DEVICE == "cpu":
@@ -50,7 +50,7 @@ model = build_model(conf).to(DEVICE)
 model.eval()
 x = torch.rand(1, 3, 384, 512).to(DEVICE)
 
-print("-"*20 + "Testing on a random input" + "-"*20)
+print("-" * 20 + "Testing on a random input" + "-" * 20)
 
 with torch.no_grad():
     out = model(x)
@@ -64,7 +64,7 @@ else:
     print([o.shape for o in out if o is not None])
 
 print("\n\n")
-print("-"*20 + " Testing on an indoor scene from url " + "-"*20)
+print("-" * 20 + " Testing on an indoor scene from url " + "-" * 20)
 
 # Test img
 url = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcS4W8H_Nxk_rs3Vje_zj6mglPOH7bnPhQitBH8WkqjlqQVotdtDEG37BsnGofME3_u6lDk&usqp=CAU"
@@ -79,7 +79,7 @@ print("predicting")
 with torch.no_grad():
     out = model.infer(X).cpu()
 
-# or just, 
+# or just,
 # out = model.infer_pil(img)
 
 
@@ -87,7 +87,7 @@ print("output.shape", out.shape)
 pred = Image.fromarray(colorize(out))
 # Stack img and pred side by side for comparison and save
 pred = pred.resize(orig_size, Image.ANTIALIAS)
-stacked = Image.new("RGB", (orig_size[0]*2, orig_size[1]))
+stacked = Image.new("RGB", (orig_size[0] * 2, orig_size[1]))
 stacked.paste(img, (0, 0))
 stacked.paste(pred, (orig_size[0], 0))
 

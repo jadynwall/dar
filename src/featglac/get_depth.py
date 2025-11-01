@@ -1,5 +1,6 @@
 import torch
 import sys
+
 sys.path.append("./src/featglac/zoedepth")
 from zoedepth.models.builder import build_model
 from zoedepth.utils.config import get_config
@@ -37,13 +38,14 @@ import torchvision.transforms as transforms
 
 #     visualise_pred = (pred - pred.min()) / (pred.max() - pred.min())
 #     visualise_pred = Image.fromarray((visualise_pred*255).astype(np.uint8))
-    # return pred, visualise_pred
+# return pred, visualise_pred
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 conf = get_config("zoedepth_nk", "infer")
 depth_estimator = build_model(conf)
 depth_estimator.to(device)
+
 
 def get_depth_map(image):
     image = torch.from_numpy(np.array(image))

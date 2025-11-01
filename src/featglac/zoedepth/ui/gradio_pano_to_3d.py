@@ -29,6 +29,7 @@ from zoedepth.utils.geometry import create_triangles
 from functools import partial
 import tempfile
 
+
 def depth_edges_mask(depth):
     """Returns a mask of edges in the depth map.
     Args:
@@ -39,7 +40,7 @@ def depth_edges_mask(depth):
     # Compute the x and y gradients of the depth map.
     depth_dx, depth_dy = np.gradient(depth)
     # Compute the gradient magnitude.
-    depth_grad = np.sqrt(depth_dx ** 2 + depth_dy ** 2)
+    depth_grad = np.sqrt(depth_dx**2 + depth_dy**2)
     # Compute the edge mask.
     mask = depth_grad > 0.05
     return mask
@@ -59,7 +60,7 @@ def pano_depth_to_world_points(depth):
     radius = depth.flatten()
 
     lon = np.linspace(-np.pi, np.pi, depth.shape[1])
-    lat = np.linspace(-np.pi/2, np.pi/2, depth.shape[0])
+    lat = np.linspace(-np.pi / 2, np.pi / 2, depth.shape[0])
 
     lon, lat = np.meshgrid(lon, lat)
     lon = lon.flatten()
@@ -79,8 +80,9 @@ def predict_depth(model, image):
     depth = model.infer_pil(image)
     return depth
 
+
 def get_mesh(model, image, keep_edges=False):
-    image.thumbnail((1024,1024))  # limit the size of the image
+    image.thumbnail((1024, 1024))  # limit the size of the image
     depth = predict_depth(model, image)
     pts3d = pano_depth_to_world_points(depth)
 
@@ -93,28 +95,36 @@ def get_mesh(model, image, keep_edges=False):
     if keep_edges:
         triangles = create_triangles(image.shape[0], image.shape[1])
     else:
-        triangles = create_triangles(image.shape[0], image.shape[1], mask=~depth_edges_mask(depth))
+        triangles = create_triangles(
+            image.shape[0], image.shape[1], mask=~depth_edges_mask(depth)
+        )
     colors = image.reshape(-1, 3)
     mesh = trimesh.Trimesh(vertices=verts, faces=triangles, vertex_colors=colors)
 
     # Save as glb
-    glb_file = tempfile.NamedTemporaryFile(suffix='.glb', delete=False)
+    glb_file = tempfile.NamedTemporaryFile(suffix=".glb", delete=False)
     glb_path = glb_file.name
     mesh.export(glb_path)
     return glb_path
 
+
 def create_demo(model):
     gr.Markdown("### Panorama to 3D mesh")
     gr.Markdown("Convert a 360 spherical panorama to a 3D mesh")
-    gr.Markdown("ZoeDepth was not trained on panoramic images. It doesn't know anything about panoramas or spherical projection. Here, we just treat the estimated depth as radius and some projection errors are expected. Nonetheless, ZoeDepth still works surprisingly well on 360 reconstruction.")
+    gr.Markdown(
+        "ZoeDepth was not trained on panoramic images. It doesn't know anything about panoramas or spherical projection. Here, we just treat the estimated depth as radius and some projection errors are expected. Nonetheless, ZoeDepth still works surprisingly well on 360 reconstruction."
+    )
 
     with gr.Row():
-        input_image = gr.Image(label="Input Image", type='pil')
-        result = gr.Model3D(label="3d mesh reconstruction", clear_color=[
-                                                 1.0, 1.0, 1.0, 1.0])
-        
+        input_image = gr.Image(label="Input Image", type="pil")
+        result = gr.Model3D(
+            label="3d mesh reconstruction", clear_color=[1.0, 1.0, 1.0, 1.0]
+        )
+
     checkbox = gr.Checkbox(label="Keep occlusion edges", value=True)
     submit = gr.Button("Submit")
-    submit.click(partial(get_mesh, model), inputs=[input_image, checkbox], outputs=[result])
+    submit.click(
+        partial(get_mesh, model), inputs=[input_image, checkbox], outputs=[result]
+    )
     # examples = gr.Examples(examples=["examples/pano_1.jpeg", "examples/pano_2.jpeg", "examples/pano_3.jpeg"],
     #                         inputs=[input_image])

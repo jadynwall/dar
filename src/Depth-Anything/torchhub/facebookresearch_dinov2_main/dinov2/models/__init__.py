@@ -38,4 +38,6 @@ def build_model(args, only_teacher=False, img_size=224):
 
 
 def build_model_from_cfg(cfg, only_teacher=False):
-    return build_model(cfg.student, only_teacher=only_teacher, img_size=cfg.crops.global_crops_size)
+    return build_model(
+        cfg.student, only_teacher=only_teacher, img_size=cfg.crops.global_crops_size
+    )

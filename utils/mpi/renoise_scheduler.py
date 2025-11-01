@@ -5,6 +5,7 @@ import torch
 from typing import List, Optional, Tuple, Union
 import numpy as np
 
+
 class DDIMSchedulerOutput(BaseOutput):
     """
     Output class for the scheduler's `step` function output.
@@ -20,6 +21,7 @@ class DDIMSchedulerOutput(BaseOutput):
 
     prev_sample: torch.FloatTensor
     pred_original_sample: Optional[torch.FloatTensor] = None
+
 
 class MyDDIMScheduler(DDIMScheduler):
 
@@ -83,11 +85,17 @@ class MyDDIMScheduler(DDIMScheduler):
         # - pred_prev_sample -> "x_t-1"
 
         # 1. get previous step value (=t-1)
-        prev_timestep = timestep - self.config.num_train_timesteps // self.num_inference_steps
+        prev_timestep = (
+            timestep - self.config.num_train_timesteps // self.num_inference_steps
+        )
 
         # 2. compute alphas, betas
         alpha_prod_t = self.alphas_cumprod[timestep]
-        alpha_prod_t_prev = self.alphas_cumprod[prev_timestep] if prev_timestep >= 0 else self.final_alpha_cumprod
+        alpha_prod_t_prev = (
+            self.alphas_cumprod[prev_timestep]
+            if prev_timestep >= 0
+            else self.final_alpha_cumprod
+        )
 
         beta_prod_t = 1 - alpha_prod_t
 
@@ -95,14 +103,22 @@ class MyDDIMScheduler(DDIMScheduler):
         # "predicted x_0" of formula (12) from https://arxiv.org/pdf/2010.02502.pdf
         assert self.config.prediction_type == "epsilon"
         if self.config.prediction_type == "epsilon":
-            pred_original_sample = (sample - beta_prod_t ** (0.5) * model_output) / alpha_prod_t ** (0.5)
+            pred_original_sample = (
+                sample - beta_prod_t ** (0.5) * model_output
+            ) / alpha_prod_t ** (0.5)
             pred_epsilon = model_output
         elif self.config.prediction_type == "sample":
             pred_original_sample = model_output
-            pred_epsilon = (sample - alpha_prod_t ** (0.5) * pred_original_sample) / beta_prod_t ** (0.5)
+            pred_epsilon = (
+                sample - alpha_prod_t ** (0.5) * pred_original_sample
+            ) / beta_prod_t ** (0.5)
         elif self.config.prediction_type == "v_prediction":
-            pred_original_sample = (alpha_prod_t**0.5) * sample - (beta_prod_t**0.5) * model_output
-            pred_epsilon = (alpha_prod_t**0.5) * model_output + (beta_prod_t**0.5) * sample
+            pred_original_sample = (alpha_prod_t**0.5) * sample - (
+                beta_prod_t**0.5
+            ) * model_output
+            pred_epsilon = (alpha_prod_t**0.5) * model_output + (
+                beta_prod_t**0.5
+            ) * sample
         else:
             raise ValueError(
                 f"prediction_type given as {self.config.prediction_type} must be one of `epsilon`, `sample`, or"
@@ -124,15 +140,25 @@ class MyDDIMScheduler(DDIMScheduler):
 
         if use_clipped_model_output:
             # the pred_epsilon is always re-derived from the clipped x_0 in Glide
-            pred_epsilon = (sample - alpha_prod_t ** (0.5) * pred_original_sample) / beta_prod_t ** (0.5)
+            pred_epsilon = (
+                sample - alpha_prod_t ** (0.5) * pred_original_sample
+            ) / beta_prod_t ** (0.5)
 
         # 6. compute "direction pointing to x_t" of formula (12) from https://arxiv.org/pdf/2010.02502.pdf
-        pred_sample_direction = (1 - alpha_prod_t_prev - std_dev_t**2) ** (0.5) * pred_epsilon
+        pred_sample_direction = (1 - alpha_prod_t_prev - std_dev_t**2) ** (
+            0.5
+        ) * pred_epsilon
 
         # 7. compute x_t without "random noise" of formula (12) from https://arxiv.org/pdf/2010.02502.pdf
         # prev_sample = alpha_prod_t_prev ** (0.5) * pred_original_sample + pred_sample_direction
 
-        prev_sample = (alpha_prod_t ** (0.5) * sample) / alpha_prod_t_prev ** (0.5) + (alpha_prod_t_prev ** (0.5) * beta_prod_t ** (0.5) * model_output) / alpha_prod_t_prev ** (0.5)  - (alpha_prod_t ** (0.5) * pred_sample_direction) / alpha_prod_t_prev ** (0.5) 
+        prev_sample = (
+            (alpha_prod_t ** (0.5) * sample) / alpha_prod_t_prev ** (0.5)
+            + (alpha_prod_t_prev ** (0.5) * beta_prod_t ** (0.5) * model_output)
+            / alpha_prod_t_prev ** (0.5)
+            - (alpha_prod_t ** (0.5) * pred_sample_direction)
+            / alpha_prod_t_prev ** (0.5)
+        )
 
         if eta > 0:
             if variance_noise is not None and generator is not None:
@@ -143,7 +169,10 @@ class MyDDIMScheduler(DDIMScheduler):
 
             if variance_noise is None:
                 variance_noise = randn_tensor(
-                    model_output.shape, generator=generator, device=model_output.device, dtype=model_output.dtype
+                    model_output.shape,
+                    generator=generator,
+                    device=model_output.device,
+                    dtype=model_output.dtype,
                 )
             variance = std_dev_t * variance_noise
 
@@ -152,4 +181,6 @@ class MyDDIMScheduler(DDIMScheduler):
         if not return_dict:
             return (prev_sample,)
 
-        return DDIMSchedulerOutput(prev_sample=prev_sample, pred_original_sample=pred_original_sample)
+        return DDIMSchedulerOutput(
+            prev_sample=prev_sample, pred_original_sample=pred_original_sample
+        )

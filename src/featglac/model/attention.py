@@ -61,7 +61,11 @@ class GatedSelfAttentionDense(nn.Module):
         n_visual = x.shape[1]
         objs = self.linear(objs)
 
-        x = x + self.alpha_attn.tanh() * self.attn(self.norm1(torch.cat([x, objs], dim=1)))[:, :n_visual, :]
+        x = (
+            x
+            + self.alpha_attn.tanh()
+            * self.attn(self.norm1(torch.cat([x, objs], dim=1)))[:, :n_visual, :]
+        )
         x = x + self.alpha_dense.tanh() * self.ff(self.norm2(x))
 
         return x
@@ -128,8 +132,12 @@ class BasicTransformerBlock(nn.Module):
         super().__init__()
         self.only_cross_attention = only_cross_attention
 
-        self.use_ada_layer_norm_zero = (num_embeds_ada_norm is not None) and norm_type == "ada_norm_zero"
-        self.use_ada_layer_norm = (num_embeds_ada_norm is not None) and norm_type == "ada_norm"
+        self.use_ada_layer_norm_zero = (
+            num_embeds_ada_norm is not None
+        ) and norm_type == "ada_norm_zero"
+        self.use_ada_layer_norm = (
+            num_embeds_ada_norm is not None
+        ) and norm_type == "ada_norm"
         self.use_ada_layer_norm_single = norm_type == "ada_norm_single"
         self.use_layer_norm = norm_type == "layer_norm"
 
@@ -145,7 +153,9 @@ class BasicTransformerBlock(nn.Module):
             )
 
         if positional_embeddings == "sinusoidal":
-            self.pos_embed = SinusoidalPositionalEmbedding(dim, max_seq_length=num_positional_embeddings)
+            self.pos_embed = SinusoidalPositionalEmbedding(
+                dim, max_seq_length=num_positional_embeddings
+            )
         else:
             self.pos_embed = None
 
@@ -156,7 +166,9 @@ class BasicTransformerBlock(nn.Module):
         elif self.use_ada_layer_norm_zero:
             self.norm1 = AdaLayerNormZero(dim, num_embeds_ada_norm)
         else:
-            self.norm1 = nn.LayerNorm(dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps)
+            self.norm1 = nn.LayerNorm(
+                dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps
+            )
 
         self.attn1 = Attention(
             query_dim=dim,
@@ -177,11 +189,15 @@ class BasicTransformerBlock(nn.Module):
             self.norm2 = (
                 AdaLayerNorm(dim, num_embeds_ada_norm)
                 if self.use_ada_layer_norm
-                else nn.LayerNorm(dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps)
+                else nn.LayerNorm(
+                    dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps
+                )
             )
             self.attn2 = Attention(
                 query_dim=dim,
-                cross_attention_dim=cross_attention_dim if not double_self_attention else None,
+                cross_attention_dim=(
+                    cross_attention_dim if not double_self_attention else None
+                ),
                 heads=num_attention_heads,
                 dim_head=attention_head_dim,
                 dropout=dropout,
@@ -195,13 +211,22 @@ class BasicTransformerBlock(nn.Module):
 
         # 3. Feed-forward
         if not self.use_ada_layer_norm_single:
-            self.norm3 = nn.LayerNorm(dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps)
+            self.norm3 = nn.LayerNorm(
+                dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps
+            )
 
-        self.ff = FeedForward(dim, dropout=dropout, activation_fn=activation_fn, final_dropout=final_dropout)
+        self.ff = FeedForward(
+            dim,
+            dropout=dropout,
+            activation_fn=activation_fn,
+            final_dropout=final_dropout,
+        )
 
         # 4. Fuser
         if attention_type == "gated" or attention_type == "gated-text-image":
-            self.fuser = GatedSelfAttentionDense(dim, cross_attention_dim, num_attention_heads, attention_head_dim)
+            self.fuser = GatedSelfAttentionDense(
+                dim, cross_attention_dim, num_attention_heads, attention_head_dim
+            )
 
         # 5. Scale-shift for PixArt-Alpha.
         if self.use_ada_layer_norm_single:
@@ -252,15 +277,23 @@ class BasicTransformerBlock(nn.Module):
             norm_hidden_states = self.pos_embed(norm_hidden_states)
 
         # 1. Retrieve lora scale.
-        lora_scale = cross_attention_kwargs.get("scale", 1.0) if cross_attention_kwargs is not None else 1.0
+        lora_scale = (
+            cross_attention_kwargs.get("scale", 1.0)
+            if cross_attention_kwargs is not None
+            else 1.0
+        )
 
         # 2. Prepare GLIGEN inputs
-        cross_attention_kwargs = cross_attention_kwargs.copy() if cross_attention_kwargs is not None else {}
+        cross_attention_kwargs = (
+            cross_attention_kwargs.copy() if cross_attention_kwargs is not None else {}
+        )
         gligen_kwargs = cross_attention_kwargs.pop("gligen", None)
 
         attn_output, cross_attn_probs = self.attn1(
             norm_hidden_states,
-            encoder_hidden_states=encoder_hidden_states if self.only_cross_attention else None,
+            encoder_hidden_states=(
+                encoder_hidden_states if self.only_cross_attention else None
+            ),
             attention_mask=attention_mask,
             **cross_attention_kwargs,
         )
@@ -306,7 +339,9 @@ class BasicTransformerBlock(nn.Module):
             norm_hidden_states = self.norm3(hidden_states)
 
         if self.use_ada_layer_norm_zero:
-            norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+            norm_hidden_states = (
+                norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+            )
 
         if self.use_ada_layer_norm_single:
             norm_hidden_states = self.norm2(hidden_states)
@@ -323,7 +358,9 @@ class BasicTransformerBlock(nn.Module):
             ff_output = torch.cat(
                 [
                     self.ff(hid_slice, scale=lora_scale)
-                    for hid_slice in norm_hidden_states.chunk(num_chunks, dim=self._chunk_dim)
+                    for hid_slice in norm_hidden_states.chunk(
+                        num_chunks, dim=self._chunk_dim
+                    )
                 ],
                 dim=self._chunk_dim,
             )

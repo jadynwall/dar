@@ -14,10 +14,13 @@ from diffusers.utils.torch_utils import randn_tensor
 from tqdm import tqdm
 import scipy.ndimage
 
-from src.featglac.model.unet_2d_condition import UNet2DConditionModel # this is the custom UNet that can also return intermediate activations and attentions
+from src.featglac.model.unet_2d_condition import (
+    UNet2DConditionModel,
+)  # this is the custom UNet that can also return intermediate activations and attentions
 from src.featglac.guided_diffuser import GuidedDiffuser
 from src.featglac.utils import normalize_attn_torch, unpack_correspondences
 from src.featglac.losses import compute_foreground_loss, compute_background_loss
+
 
 class GuidedStableDiffuser(GuidedDiffuser):
     def __init__(self, conf):
@@ -25,28 +28,48 @@ class GuidedStableDiffuser(GuidedDiffuser):
 
         if self.conf.use_depth:
             model_name = "stabilityai/stable-diffusion-2-depth"
-        else:       
+        else:
             model_name = "stabilityai/stable-diffusion-2-1-base"
 
         self.scheduler = DDIMScheduler(
-            beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
-        self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder="unet", save_activations=True)
-        self.tokenizer = CLIPTokenizer.from_pretrained(model_name, subfolder="tokenizer")
-        self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder="text_encoder")
+            beta_start=0.00085,
+            beta_end=0.012,
+            beta_schedule="scaled_linear",
+            clip_sample=False,
+            set_alpha_to_one=False,
+        )
+        self.unet = UNet2DConditionModel.from_pretrained(
+            model_name, subfolder="unet", save_activations=True
+        )
+        self.tokenizer = CLIPTokenizer.from_pretrained(
+            model_name, subfolder="tokenizer"
+        )
+        self.text_encoder = CLIPTextModel.from_pretrained(
+            model_name, subfolder="text_encoder"
+        )
         self.vae = AutoencoderKL.from_pretrained(model_name, subfolder="vae")
 
         self.device = self.unet.device
 
         # fix deprecated config file for some stable diffusion versions
-        is_unet_version_less_0_9_0 = hasattr(self.unet.config, "_diffusers_version") and version.parse(
+        is_unet_version_less_0_9_0 = hasattr(
+            self.unet.config, "_diffusers_version"
+        ) and version.parse(
             version.parse(self.unet.config._diffusers_version).base_version
-        ) < version.parse("0.9.0.dev0")
-        is_unet_sample_size_less_64 = hasattr(self.unet.config, "sample_size") and self.unet.config.sample_size < 64
+        ) < version.parse(
+            "0.9.0.dev0"
+        )
+        is_unet_sample_size_less_64 = (
+            hasattr(self.unet.config, "sample_size")
+            and self.unet.config.sample_size < 64
+        )
         is_stable_diffusion_2_depth = (
             hasattr(self.unet.config, "_name_or_path")
             and self.unet.config._name_or_path == "stabilityai/stable-diffusion-2-depth"
         )
-        if (is_unet_version_less_0_9_0 and is_unet_sample_size_less_64) or is_stable_diffusion_2_depth:
+        if (
+            is_unet_version_less_0_9_0 and is_unet_sample_size_less_64
+        ) or is_stable_diffusion_2_depth:
             deprecation_message = (
                 "The configuration file of the unet has set the default `sample_size` to smaller than"
                 " 64 which seems highly unlikely .If you're checkpoint is a fine-tuned version of any of the"
@@ -68,8 +91,8 @@ class GuidedStableDiffuser(GuidedDiffuser):
 
     def to(self, device: torch.device = None):
 
-        device=torch.device(device)
-        
+        device = torch.device(device)
+
         self.unet = self.unet.to(device=device)
         # self.tokenizer = self.tokenizer.to(device=device)
         self.text_encoder = self.text_encoder.to(device=device)
@@ -89,12 +112,14 @@ class GuidedStableDiffuser(GuidedDiffuser):
         if isinstance(feat_hw, int):
             feat_hw = (feat_hw, feat_hw)
         return (feat_hw[0], feat_hw[1], self.unet.config.out_channels)
-    
+
     @torch.no_grad()
     def init_prompt(self, prompt: str):
         uncond_input = self.tokenizer(
-            [""], padding="max_length", max_length=self.tokenizer.model_max_length,
-            return_tensors="pt"
+            [""],
+            padding="max_length",
+            max_length=self.tokenizer.model_max_length,
+            return_tensors="pt",
         )
         uncond_embeddings = self.text_encoder(uncond_input.input_ids.to(self.device))[0]
         text_input = self.tokenizer(
@@ -118,7 +143,7 @@ class GuidedStableDiffuser(GuidedDiffuser):
             mode="bicubic",
             align_corners=False,
         )
-        
+
         # normalize depth to [0, 1]
         depth_min = torch.amin(depth, dim=[1, 2, 3], keepdim=True)
         depth_max = torch.amax(depth, dim=[1, 2, 3], keepdim=True)
@@ -136,8 +161,8 @@ class GuidedStableDiffuser(GuidedDiffuser):
         """
         # # f = 0.5 * w / np.tan(0.5 * 6.24 * np.pi / 180.0) #car benchmark
         # #f = 0.5 * W / np.tan(0.5 * 7.18 * np.pi / 180.0) #airplane benchmark
-        # #f = 0.5 * W / np.tan(0.5 * 14.9 * np.pi / 180.0) #chair, cup, lamp, stool benchmark        
-        # #f = 0.5 * W / np.tan(0.5 * 7.23 * np.pi / 180.0) #plant benchmark            
+        # #f = 0.5 * W / np.tan(0.5 * 14.9 * np.pi / 180.0) #chair, cup, lamp, stool benchmark
+        # #f = 0.5 * W / np.tan(0.5 * 7.23 * np.pi / 180.0) #plant benchmark
         # f = 0.5 * w / np.tan(0.5 * 55 * np.pi / 180.0)
         # cx = 0.5 * w
         # cy = 0.5 * h
@@ -146,34 +171,42 @@ class GuidedStableDiffuser(GuidedDiffuser):
         f = 1.0 / np.tan(0.5 * fov * (np.pi / 180.0))
         cx = 0.0
         cy = 0.0
-        return torch.tensor([
-            [f, 0, cx],
-            [0, f, cy],
-            [0, 0, 1]
-            ], dtype=torch.float32, device=device)
+        return torch.tensor(
+            [[f, 0, cx], [0, f, cy], [0, 0, 1]], dtype=torch.float32, device=device
+        )
 
-    def initial_inference(self, init_latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str): #, phrases: List[str]):
+    def initial_inference(
+        self,
+        init_latents: torch.Tensor,
+        depth: torch.Tensor,
+        uncond_embeddings: torch.Tensor,
+        prompt: str,
+    ):  # , phrases: List[str]):
 
         strength = 1.0
-        
-        generator = torch.manual_seed(self.conf.seed)  # Seed generator to create the inital latent noise - 305 for car, 105 for cup, 155 for lamp
-        
-        #Set timesteps
+
+        generator = torch.manual_seed(
+            self.conf.seed
+        )  # Seed generator to create the inital latent noise - 305 for car, 105 for cup, 155 for lamp
+
+        # Set timesteps
         self.scheduler.set_timesteps(self.conf.num_timesteps, device=self.device)
-        timesteps, num_inference_steps = self.get_timesteps(self.conf.num_timesteps, strength)
+        timesteps, num_inference_steps = self.get_timesteps(
+            self.conf.num_timesteps, strength
+        )
 
         if self.conf.use_depth:
             print("Using depth")
             depth = self.init_depth(depth)
-        
+
         # Encode Prompt
         cond_input = self.tokenizer(
-                [prompt],
-                padding="max_length",
-                truncation=True,
-                max_length=self.tokenizer.model_max_length,
-                return_tensors="pt",
-            )
+            [prompt],
+            padding="max_length",
+            truncation=True,
+            max_length=self.tokenizer.model_max_length,
+            return_tensors="pt",
+        )
 
         cond_embeddings = self.text_encoder(cond_input.input_ids.to(self.device))[0]
 
@@ -185,37 +218,60 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 truncation=True,
                 return_tensors="pt",
             )
-            uncond_embeddings = self.text_encoder(uncond_input.input_ids.to(self.device))[[0]]
+            uncond_embeddings = self.text_encoder(
+                uncond_input.input_ids.to(self.device)
+            )[[0]]
         if uncond_embeddings.shape[0] == 0:
             uncond_embeddings = uncond_embeddings.expand(len(timesteps), -1, -1, -1)
-        
+
         if init_latents is None:
             # in_channels-1 because depth will be concatentated if depth is used
-            num_latent_channels = self.unet.config.in_channels-1 if self.conf.use_depth else self.unet.config.in_channels
+            num_latent_channels = (
+                self.unet.config.in_channels - 1
+                if self.conf.use_depth
+                else self.unet.config.in_channels
+            )
             init_latents = torch.zeros(
-                size=[1, num_latent_channels, self.unet.config.sample_size, self.unet.config.sample_size],
-                device=self.device, dtype=torch.float32)
+                size=[
+                    1,
+                    num_latent_channels,
+                    self.unet.config.sample_size,
+                    self.unet.config.sample_size,
+                ],
+                device=self.device,
+                dtype=torch.float32,
+            )
             noise = randn_tensor(
-                shape=[1, num_latent_channels, self.unet.config.sample_size, self.unet.config.sample_size],
-                generator=generator, device=self.device, dtype=torch.float32)
+                shape=[
+                    1,
+                    num_latent_channels,
+                    self.unet.config.sample_size,
+                    self.unet.config.sample_size,
+                ],
+                generator=generator,
+                device=self.device,
+                dtype=torch.float32,
+            )
             init_latents = self.scheduler.add_noise(init_latents, noise, timesteps[0])
 
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, 0.0)
 
         # attention_list = []
-        activation_list = [] 
+        activation_list = []
         activation2_list = []
         activation3_list = []
 
         latents = init_latents
-        
+
         # obj_number = 2
         for t_idx, t in enumerate(tqdm(timesteps)):
             with torch.no_grad():
 
-                #Prepare latent variables
-                latent_model_input = latents #torch.cat([latents]) #if do_classifier_free_guidance else latents
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                # Prepare latent variables
+                latent_model_input = latents  # torch.cat([latents]) #if do_classifier_free_guidance else latents
+                latent_model_input = self.scheduler.scale_model_input(
+                    latent_model_input, t
+                )
                 if self.conf.use_depth:
                     latent_model_input = torch.cat([latent_model_input, depth], dim=1)
 
@@ -227,7 +283,7 @@ class GuidedStableDiffuser(GuidedDiffuser):
                     cross_attention_kwargs=None,
                     return_dict=False,
                 )
-                
+
                 noise_pred = unet_output[0]
                 # attn_map_integrated_up = unet_output[1]
                 # attn_map_integrated_mid = unet_output[2]
@@ -235,18 +291,28 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 activations = unet_output[4]
                 activations2 = unet_output[5]
                 activations3 = unet_output[6]
-                
+
                 activation_list.append(activations[0])
                 activation2_list.append(activations2[0])
                 activation3_list.append(activations3[0])
-                            
-                latent_model_input = torch.cat([latents]*2) #if do_classifier_free_guidance else latents
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+
+                latent_model_input = torch.cat(
+                    [latents] * 2
+                )  # if do_classifier_free_guidance else latents
+                latent_model_input = self.scheduler.scale_model_input(
+                    latent_model_input, t
+                )
                 if self.conf.use_depth:
-                    latent_model_input = torch.cat([latent_model_input, torch.cat([depth]*2, dim=0)], dim=1)
+                    latent_model_input = torch.cat(
+                        [latent_model_input, torch.cat([depth] * 2, dim=0)], dim=1
+                    )
 
-
-                text_embeddings = torch.cat([uncond_embeddings[t_idx].expand(*cond_embeddings.shape), cond_embeddings])
+                text_embeddings = torch.cat(
+                    [
+                        uncond_embeddings[t_idx].expand(*cond_embeddings.shape),
+                        cond_embeddings,
+                    ]
+                )
 
                 # predict the noise residual
                 unet_output = self.unet(
@@ -256,23 +322,28 @@ class GuidedStableDiffuser(GuidedDiffuser):
                     cross_attention_kwargs=None,
                     return_dict=False,
                 )
-                    
+
                 noise_pred = unet_output[0]
 
                 # perform guidance
-                #if do_classifier_free_guidance:
+                # if do_classifier_free_guidance:
                 noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                noise_pred = noise_pred_uncond + 7.5 * (noise_pred_text - noise_pred_uncond)
+                noise_pred = noise_pred_uncond + 7.5 * (
+                    noise_pred_text - noise_pred_uncond
+                )
 
                 # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]     
+                latents = self.scheduler.step(
+                    noise_pred, t, latents, **extra_step_kwargs, return_dict=False
+                )[0]
                 torch.cuda.empty_cache()
-        
+
         activations = [
             torch.stack(activation_list, dim=0),
             torch.stack(activation2_list, dim=0),
-            torch.stack(activation3_list, dim=0)]
-        
+            torch.stack(activation3_list, dim=0),
+        ]
+
         return activations, latents, uncond_embeddings, init_latents
 
     def encode_latent_image(self, image: torch.Tensor) -> torch.Tensor:
@@ -282,18 +353,29 @@ class GuidedStableDiffuser(GuidedDiffuser):
         # TODO: check that the code above works correctly and is the same thing that the StabelDiffusionDepth2Img Pipeline is doing
         # https://github.com/huggingface/diffusers/blob/v0.27.2/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion_depth2img.py
         raise NotImplementedError
-    
+
     def decode_latent_image(self, latent_image: torch.Tensor) -> torch.Tensor:
-        image = self.vae.decode(latent_image / self.vae.config.scaling_factor, return_dict=False)[0]
-        image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
+        image = self.vae.decode(
+            latent_image / self.vae.config.scaling_factor, return_dict=False
+        )[0]
+        image = VaeImageProcessor(
+            vae_scale_factor=self.vae.config.scaling_factor
+        ).postprocess(image, output_type="pt")
         return image
-    
-   
+
     def guided_inference(
-            self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str,
-            activations_orig: List[torch.Tensor],
-            correspondences: torch.Tensor, fg_weight: float = None, bg_weight: float = None, save_denoising_steps: bool = False):
-        
+        self,
+        latents: torch.Tensor,
+        depth: torch.Tensor,
+        uncond_embeddings: torch.Tensor,
+        prompt: str,
+        activations_orig: List[torch.Tensor],
+        correspondences: torch.Tensor,
+        fg_weight: float = None,
+        bg_weight: float = None,
+        save_denoising_steps: bool = False,
+    ):
+
         strength = 1.0
 
         if fg_weight is None:
@@ -302,26 +384,32 @@ class GuidedStableDiffuser(GuidedDiffuser):
             bg_weight = self.conf.bg_weight
 
         with torch.no_grad():
-        
+
             generator = torch.manual_seed(self.conf.seed)
 
-            #Set timesteps
+            # Set timesteps
             self.scheduler.set_timesteps(self.conf.num_timesteps, device=self.device)
-            timesteps, num_inference_steps = self.get_timesteps(self.conf.num_timesteps, strength)
-            
-            processed_correspondences = self.process_correspondences(correspondences, img_res=depth.shape[-1], bg_erosion=self.conf.bg_erosion)
-            
+            timesteps, num_inference_steps = self.get_timesteps(
+                self.conf.num_timesteps, strength
+            )
+
+            processed_correspondences = self.process_correspondences(
+                correspondences,
+                img_res=depth.shape[-1],
+                bg_erosion=self.conf.bg_erosion,
+            )
+
             if self.conf.use_depth:
                 depth = self.init_depth(depth)
-            
+
             # Encode Prompt
             input_ids = self.tokenizer(
-                    [prompt],
-                    padding="max_length",
-                    truncation=True,
-                    max_length=self.tokenizer.model_max_length,
-                    return_tensors="pt",
-                )
+                [prompt],
+                padding="max_length",
+                truncation=True,
+                max_length=self.tokenizer.model_max_length,
+                return_tensors="pt",
+            )
 
             cond_embeddings = self.text_encoder(input_ids.input_ids.to(self.device))[0]
 
@@ -329,25 +417,41 @@ class GuidedStableDiffuser(GuidedDiffuser):
 
             if save_denoising_steps:
                 denoising_steps = {
-                    'opt': [],
-                    'post-opt': [],
+                    "opt": [],
+                    "post-opt": [],
                 }
-            
+
             # create guidance weight schedule
             fg_weight *= 30
             bg_weight *= 30
             denoising_weight_schedule = []
             if self.conf.guidance_schedule_type == "constant":
-                fg_weight_falloff = np.linspace(fg_weight, fg_weight, self.conf.guidance_max_step)
-                bg_weight_falloff = np.linspace(bg_weight, bg_weight, self.conf.guidance_max_step)
+                fg_weight_falloff = np.linspace(
+                    fg_weight, fg_weight, self.conf.guidance_max_step
+                )
+                bg_weight_falloff = np.linspace(
+                    bg_weight, bg_weight, self.conf.guidance_max_step
+                )
             elif self.conf.guidance_schedule_type == "linear":
-                fg_weight_falloff = np.linspace(fg_weight, 0.0, self.conf.guidance_max_step)
-                bg_weight_falloff = np.linspace(bg_weight, 0.0, self.conf.guidance_max_step)
+                fg_weight_falloff = np.linspace(
+                    fg_weight, 0.0, self.conf.guidance_max_step
+                )
+                bg_weight_falloff = np.linspace(
+                    bg_weight, 0.0, self.conf.guidance_max_step
+                )
             elif self.conf.guidance_schedule_type == "quadratic":
-                fg_weight_falloff = np.linspace(np.sqrt(fg_weight), 0.0, self.conf.guidance_max_step)**2
-                bg_weight_falloff = np.linspace(np.sqrt(bg_weight), 0.0, self.conf.guidance_max_step)**2
+                fg_weight_falloff = (
+                    np.linspace(np.sqrt(fg_weight), 0.0, self.conf.guidance_max_step)
+                    ** 2
+                )
+                bg_weight_falloff = (
+                    np.linspace(np.sqrt(bg_weight), 0.0, self.conf.guidance_max_step)
+                    ** 2
+                )
             else:
-                raise ValueError(f"Unknown guidance schedule type: {self.conf.guidance_schedule_type}")
+                raise ValueError(
+                    f"Unknown guidance schedule type: {self.conf.guidance_schedule_type}"
+                )
             for t_idx in range(self.conf.guidance_max_step):
                 if t_idx % 3 == 0:
                     fg_weights = [0.0, 0.0, 7.5]
@@ -358,11 +462,16 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 elif t_idx % 3 == 2:
                     fg_weights = [0.0, 5.0, 7.5]
                     bg_weights = [0.0, 1.5, 1.5]
-                denoising_weight_schedule.append((
-                    t_idx,
-                    (np.array(fg_weights)*fg_weight_falloff[t_idx]).tolist(),
-                    (np.array(bg_weights)*bg_weight_falloff[t_idx]).tolist()))
-            denoising_weight_schedule.append((self.conf.guidance_max_step, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]))
+                denoising_weight_schedule.append(
+                    (
+                        t_idx,
+                        (np.array(fg_weights) * fg_weight_falloff[t_idx]).tolist(),
+                        (np.array(bg_weights) * bg_weight_falloff[t_idx]).tolist(),
+                    )
+                )
+            denoising_weight_schedule.append(
+                (self.conf.guidance_max_step, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+            )
             optimization_weight_schedule = [
                 (0, [2.5, 2.5, 2.5], [1.25, 1.25, 1.25]),
                 (1, [1.25, 1.25, 1.25], [2.5, 2.5, 2.5]),
@@ -371,36 +480,45 @@ class GuidedStableDiffuser(GuidedDiffuser):
             ]
             guidance_weight_schedule = StepGuidanceWeightSchedule(
                 denoising_steps=denoising_weight_schedule,
-                optimization_steps=optimization_weight_schedule)
-        
+                optimization_steps=optimization_weight_schedule,
+            )
+
         # latents = latents.requires_grad_(True)
 
         for t_idx, t in enumerate(tqdm(timesteps)):
-            
+
             torch.set_grad_enabled(True)
             # with torch.enable_grad():
             latents = latents.requires_grad_(True)
 
-            activations_size = (activations_orig[2][t_idx].shape[-2], activations_orig[2][t_idx].shape[-1])
+            activations_size = (
+                activations_orig[2][t_idx].shape[-2],
+                activations_orig[2][t_idx].shape[-1],
+            )
 
             if save_denoising_steps:
-                denoising_steps['opt'].append([])
-                        
+                denoising_steps["opt"].append([])
+
             # opt = torch.optim.Adam(params=[latents], lr=0.01)
             # opt = torch.optim.SGD(params=[latents], lr=0.1)
 
             iteration = 0
-            while iteration < self.conf.num_optsteps and t_idx < self.conf.guidance_max_step:
+            while (
+                iteration < self.conf.num_optsteps
+                and t_idx < self.conf.guidance_max_step
+            ):
 
                 # latents = latents.detach().requires_grad_(True)
-                
+
                 # latents = latents.requires_grad_(True)
                 latent_model_input = latents
 
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                latent_model_input = self.scheduler.scale_model_input(
+                    latent_model_input, t
+                )
                 if self.conf.use_depth:
                     latent_model_input = torch.cat([latent_model_input, depth], dim=1)
-                                
+
                 # predict the noise residual
                 unet_output = self.unet(
                     latent_model_input,
@@ -409,7 +527,7 @@ class GuidedStableDiffuser(GuidedDiffuser):
                     cross_attention_kwargs=None,
                     return_dict=False,
                 )
-                    
+
                 noise_pred = unet_output[0]
                 activations = [unet_output[4], unet_output[5], unet_output[6]]
 
@@ -419,43 +537,63 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 for act_idx in range(len(activations_orig)):
                     if fgw != 0.0:
                         loss += fgw[act_idx] * compute_foreground_loss(
-                            activations=activations[act_idx][0], activations_orig=activations_orig[act_idx][t_idx],
+                            activations=activations[act_idx][0],
+                            activations_orig=activations_orig[act_idx][t_idx],
                             processed_correspondences=processed_correspondences,
-                            patch_size=self.conf.fg_patch_size, activations_size=activations_size)
+                            patch_size=self.conf.fg_patch_size,
+                            activations_size=activations_size,
+                        )
                     if bgw != 0.0:
                         loss += bgw[act_idx] * compute_background_loss(
-                            activations=activations[act_idx][0], activations_orig=activations_orig[act_idx][t_idx],
+                            activations=activations[act_idx][0],
+                            activations_orig=activations_orig[act_idx][t_idx],
                             processed_correspondences=processed_correspondences,
-                            patch_size=self.conf.bg_patch_size, activations_size=activations_size, loss_type=self.conf.bg_loss_type)
+                            patch_size=self.conf.bg_patch_size,
+                            activations_size=activations_size,
+                            loss_type=self.conf.bg_loss_type,
+                        )
 
-                if(loss == 0):
+                if loss == 0:
                     grad_cond = 0
                 else:
-                    grad_cond = torch.autograd.grad(loss.requires_grad_(True), [latents])[0]
+                    grad_cond = torch.autograd.grad(
+                        loss.requires_grad_(True), [latents]
+                    )[0]
                 latents = latents - grad_cond * 0.1
 
                 # if loss != 0:
                 #     opt.zero_grad()
                 #     loss.backward()
                 #     opt.step()
-                
+
                 iteration += 1
                 # torch.cuda.empty_cache()
 
             if save_denoising_steps:
                 with torch.no_grad():
                     image = self.decode_latent_image(latents.detach())
-                    denoising_steps['opt'][-1].append(image.cpu())
-                
-            torch.set_grad_enabled(False)            
+                    denoising_steps["opt"][-1].append(image.cpu())
+
+            torch.set_grad_enabled(False)
             with torch.no_grad():
 
-                latent_model_input = torch.cat([latents] * 2) #if do_classifier_free_guidance else latents
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                latent_model_input = torch.cat(
+                    [latents] * 2
+                )  # if do_classifier_free_guidance else latents
+                latent_model_input = self.scheduler.scale_model_input(
+                    latent_model_input, t
+                )
                 if self.conf.use_depth:
-                    latent_model_input = torch.cat([latent_model_input, torch.cat([depth]*2, dim=0)], dim=1)
+                    latent_model_input = torch.cat(
+                        [latent_model_input, torch.cat([depth] * 2, dim=0)], dim=1
+                    )
 
-                text_embeddings = torch.cat([uncond_embeddings[t_idx].expand(*cond_embeddings.shape), cond_embeddings])
+                text_embeddings = torch.cat(
+                    [
+                        uncond_embeddings[t_idx].expand(*cond_embeddings.shape),
+                        cond_embeddings,
+                    ]
+                )
 
                 # predict the noise residual
                 unet_output = self.unet(
@@ -465,34 +603,50 @@ class GuidedStableDiffuser(GuidedDiffuser):
                     cross_attention_kwargs=None,
                     return_dict=False,
                 )
-                    
+
                 noise_pred = unet_output[0]
-                
+
                 noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                noise_pred = noise_pred_uncond + 7.5 * (noise_pred_text - noise_pred_uncond)
+                noise_pred = noise_pred_uncond + 7.5 * (
+                    noise_pred_text - noise_pred_uncond
+                )
 
                 # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
+                latents = self.scheduler.step(
+                    noise_pred, t, latents, **extra_step_kwargs, return_dict=False
+                )[0]
                 torch.cuda.empty_cache()
 
                 if save_denoising_steps:
                     image = self.decode_latent_image(latents.detach())
-                    denoising_steps['opt'][-1].append(image.cpu())
-                    
+                    denoising_steps["opt"][-1].append(image.cpu())
+
         with torch.no_grad():
-            image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-            image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
-        
+            image = self.vae.decode(
+                latents / self.vae.config.scaling_factor, return_dict=False
+            )[0]
+            image = VaeImageProcessor(
+                vae_scale_factor=self.vae.config.scaling_factor
+            ).postprocess(image, output_type="pt")
+
         if save_denoising_steps:
             return image, denoising_steps
         else:
             return image
-    
+
     def guided_mpi_inference(
-            self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str,
-            activations_orig: List[torch.Tensor],
-            correspondences: torch.Tensor, fg_weight: float = None, bg_weight: float = None, save_denoising_steps: bool = False):
-        
+        self,
+        latents: torch.Tensor,
+        depth: torch.Tensor,
+        uncond_embeddings: torch.Tensor,
+        prompt: str,
+        activations_orig: List[torch.Tensor],
+        correspondences: torch.Tensor,
+        fg_weight: float = None,
+        bg_weight: float = None,
+        save_denoising_steps: bool = False,
+    ):
+
         strength = 1.0
 
         if fg_weight is None:
@@ -500,45 +654,65 @@ class GuidedStableDiffuser(GuidedDiffuser):
         if bg_weight is None:
             bg_weight = self.conf.bg_weight
 
-        if(len(activations_orig) == 2):
-            activations_back, activations_fore = activations_orig[0], activations_orig[1]
+        if len(activations_orig) == 2:
+            activations_back, activations_fore = (
+                activations_orig[0],
+                activations_orig[1],
+            )
         else:
             print("Activations list length is not 2")
             activations_back, activations_mid, activations_fore = activations_orig
 
         with torch.no_grad():
-        
+
             generator = torch.manual_seed(self.conf.seed)
 
-            #Set timesteps
+            # Set timesteps
             self.scheduler.set_timesteps(self.conf.num_timesteps, device=self.device)
-            timesteps, num_inference_steps = self.get_timesteps(self.conf.num_timesteps, strength)
-            
-            if(len(activations_orig) == 2):
-                processed_correspondences = self.process_correspondences(correspondences, img_res=depth.shape[-1], bg_erosion=self.conf.bg_erosion)
+            timesteps, num_inference_steps = self.get_timesteps(
+                self.conf.num_timesteps, strength
+            )
+
+            if len(activations_orig) == 2:
+                processed_correspondences = self.process_correspondences(
+                    correspondences,
+                    img_res=depth.shape[-1],
+                    bg_erosion=self.conf.bg_erosion,
+                )
                 bg_correspondences = processed_correspondences
                 fg_correspondences = processed_correspondences
             else:
-                bg_correspondences = self.process_correspondences(correspondences[0], img_res=depth.shape[-1], bg_erosion=self.conf.bg_erosion)
-                mid_correspondences = self.process_correspondences(correspondences[1], img_res=depth.shape[-1], bg_erosion=self.conf.bg_erosion)
-                fg_correspondences = self.process_correspondences(correspondences[2], img_res=depth.shape[-1], bg_erosion=self.conf.bg_erosion)
+                bg_correspondences = self.process_correspondences(
+                    correspondences[0],
+                    img_res=depth.shape[-1],
+                    bg_erosion=self.conf.bg_erosion,
+                )
+                mid_correspondences = self.process_correspondences(
+                    correspondences[1],
+                    img_res=depth.shape[-1],
+                    bg_erosion=self.conf.bg_erosion,
+                )
+                fg_correspondences = self.process_correspondences(
+                    correspondences[2],
+                    img_res=depth.shape[-1],
+                    bg_erosion=self.conf.bg_erosion,
+                )
 
-            
             if self.conf.use_depth:
                 depth = self.init_depth(depth)
-            
+
             # Encode Prompt
             input_ids = self.tokenizer(
-                    [prompt],
-                    padding="max_length",
-                    truncation=True,
-                    max_length=self.tokenizer.model_max_length,
-                    return_tensors="pt",
-                )
+                [prompt],
+                padding="max_length",
+                truncation=True,
+                max_length=self.tokenizer.model_max_length,
+                return_tensors="pt",
+            )
 
             cond_embeddings = self.text_encoder(input_ids.input_ids.to(self.device))[0]
 
-            if(uncond_embeddings is None):
+            if uncond_embeddings is None:
                 input_ids_uncond = self.tokenizer(
                     [""],
                     padding="max_length",
@@ -546,42 +720,65 @@ class GuidedStableDiffuser(GuidedDiffuser):
                     truncation=True,
                     return_tensors="pt",
                 )
-                uncond_embeddings = self.text_encoder(input_ids_uncond.input_ids.to(self.device))[0]
+                uncond_embeddings = self.text_encoder(
+                    input_ids_uncond.input_ids.to(self.device)
+                )[0]
                 uncond_embeddings = uncond_embeddings.expand(len(timesteps), -1, -1, -1)
 
             extra_step_kwargs = self.prepare_extra_step_kwargs(generator, 0.0)
 
             if save_denoising_steps:
                 denoising_steps = {
-                    'opt': [],
-                    'post-opt': [],
+                    "opt": [],
+                    "post-opt": [],
                 }
-            
+
             # create guidance weight schedule
             fg_weight *= 30
             bg_weight *= 30
             denoising_weight_schedule = []
             if self.conf.guidance_schedule_type == "constant":
-                fg_weight_falloff = np.linspace(fg_weight, fg_weight, self.conf.guidance_max_step)
-                bg_weight_falloff = np.linspace(bg_weight, bg_weight, self.conf.guidance_max_step)
+                fg_weight_falloff = np.linspace(
+                    fg_weight, fg_weight, self.conf.guidance_max_step
+                )
+                bg_weight_falloff = np.linspace(
+                    bg_weight, bg_weight, self.conf.guidance_max_step
+                )
             elif self.conf.guidance_schedule_type == "linear":
-                fg_weight_falloff = np.linspace(fg_weight, 0.0, self.conf.guidance_max_step)
-                bg_weight_falloff = np.linspace(bg_weight, 0.0, self.conf.guidance_max_step)
+                fg_weight_falloff = np.linspace(
+                    fg_weight, 0.0, self.conf.guidance_max_step
+                )
+                bg_weight_falloff = np.linspace(
+                    bg_weight, 0.0, self.conf.guidance_max_step
+                )
             elif self.conf.guidance_schedule_type == "quadratic":
-                fg_weight_falloff = np.linspace(np.sqrt(fg_weight), 0.0, self.conf.guidance_max_step)**2
-                bg_weight_falloff = np.linspace(np.sqrt(bg_weight), 0.0, self.conf.guidance_max_step)**2
+                fg_weight_falloff = (
+                    np.linspace(np.sqrt(fg_weight), 0.0, self.conf.guidance_max_step)
+                    ** 2
+                )
+                bg_weight_falloff = (
+                    np.linspace(np.sqrt(bg_weight), 0.0, self.conf.guidance_max_step)
+                    ** 2
+                )
             else:
-                raise ValueError(f"Unknown guidance schedule type: {self.conf.guidance_schedule_type}")
+                raise ValueError(
+                    f"Unknown guidance schedule type: {self.conf.guidance_schedule_type}"
+                )
             for t_idx in range(self.conf.guidance_max_step):
 
                 fg_weights = [0.0, 0.0, 8.5]
                 bg_weights = [0.0, 0.0, 1.5]
-              
-                denoising_weight_schedule.append((
-                    t_idx,
-                    (np.array(fg_weights)*fg_weight_falloff[t_idx]).tolist(),
-                    (np.array(bg_weights)*bg_weight_falloff[t_idx]).tolist()))
-            denoising_weight_schedule.append((self.conf.guidance_max_step, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]))
+
+                denoising_weight_schedule.append(
+                    (
+                        t_idx,
+                        (np.array(fg_weights) * fg_weight_falloff[t_idx]).tolist(),
+                        (np.array(bg_weights) * bg_weight_falloff[t_idx]).tolist(),
+                    )
+                )
+            denoising_weight_schedule.append(
+                (self.conf.guidance_max_step, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+            )
 
             optimization_weight_schedule = [
                 (0, [2.5, 2.5, 2.5], [1.25, 1.25, 1.25]),
@@ -592,36 +789,45 @@ class GuidedStableDiffuser(GuidedDiffuser):
             ]
             guidance_weight_schedule = StepGuidanceWeightSchedule(
                 denoising_steps=denoising_weight_schedule,
-                optimization_steps=optimization_weight_schedule)
-        
+                optimization_steps=optimization_weight_schedule,
+            )
+
         # latents = latents.requires_grad_(True)
 
         for t_idx, t in enumerate(tqdm(timesteps)):
-            
+
             torch.set_grad_enabled(True)
             # with torch.enable_grad():
             latents = latents.requires_grad_(True)
 
-            activations_size = (activations_fore[2][t_idx].shape[-2], activations_fore[2][t_idx].shape[-1])
+            activations_size = (
+                activations_fore[2][t_idx].shape[-2],
+                activations_fore[2][t_idx].shape[-1],
+            )
 
             if save_denoising_steps:
-                denoising_steps['opt'].append([])
-                        
+                denoising_steps["opt"].append([])
+
             # opt = torch.optim.Adam(params=[latents], lr=0.01)
             # opt = torch.optim.SGD(params=[latents], lr=0.1)
 
             iteration = 0
-            while iteration < self.conf.num_optsteps and t_idx < self.conf.guidance_max_step:
+            while (
+                iteration < self.conf.num_optsteps
+                and t_idx < self.conf.guidance_max_step
+            ):
 
                 # latents = latents.detach().requires_grad_(True)
-                
+
                 # latents = latents.requires_grad_(True)
                 latent_model_input = latents
 
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                latent_model_input = self.scheduler.scale_model_input(
+                    latent_model_input, t
+                )
                 if self.conf.use_depth:
                     latent_model_input = torch.cat([latent_model_input, depth], dim=1)
-                                
+
                 # predict the noise residual
                 unet_output = self.unet(
                     latent_model_input,
@@ -630,7 +836,7 @@ class GuidedStableDiffuser(GuidedDiffuser):
                     cross_attention_kwargs=None,
                     return_dict=False,
                 )
-                    
+
                 noise_pred = unet_output[0]
                 activations = [unet_output[4], unet_output[5], unet_output[6]]
 
@@ -642,27 +848,38 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 for act_idx in range(len(activations_fore)):
                     if fgw != 0.0:
                         loss += fgw[act_idx] * compute_foreground_loss(
-                            activations=activations[act_idx][0], activations_orig=activations_fore[act_idx][t_idx],
+                            activations=activations[act_idx][0],
+                            activations_orig=activations_fore[act_idx][t_idx],
                             processed_correspondences=fg_correspondences,
-                            patch_size=self.conf.fg_patch_size, activations_size=activations_size)
+                            patch_size=self.conf.fg_patch_size,
+                            activations_size=activations_size,
+                        )
                     if bgw != 0.0:
                         loss += bgw[act_idx] * compute_background_loss(
-                            activations=activations[act_idx][0], activations_orig=activations_back[act_idx][t_idx],
+                            activations=activations[act_idx][0],
+                            activations_orig=activations_back[act_idx][t_idx],
                             processed_correspondences=bg_correspondences,
-                            patch_size=self.conf.bg_patch_size, activations_size=activations_size, loss_type=self.conf.bg_loss_type)
-                    
-                    if(len(activations_orig) == 3):
-                        if(fgw != 0.0):
+                            patch_size=self.conf.bg_patch_size,
+                            activations_size=activations_size,
+                            loss_type=self.conf.bg_loss_type,
+                        )
+
+                    if len(activations_orig) == 3:
+                        if fgw != 0.0:
                             loss += fgw[act_idx] * compute_foreground_loss(
-                                activations=activations[act_idx][0], activations_orig=activations_mid[act_idx][t_idx],
+                                activations=activations[act_idx][0],
+                                activations_orig=activations_mid[act_idx][t_idx],
                                 processed_correspondences=mid_correspondences,
-                                patch_size=self.conf.fg_patch_size, activations_size=activations_size)
+                                patch_size=self.conf.fg_patch_size,
+                                activations_size=activations_size,
+                            )
 
-
-                if(loss == 0):
+                if loss == 0:
                     grad_cond = 0
                 else:
-                    grad_cond = torch.autograd.grad(loss.requires_grad_(True), [latents])[0]
+                    grad_cond = torch.autograd.grad(
+                        loss.requires_grad_(True), [latents]
+                    )[0]
                 latents = latents - grad_cond * 0.1  # 0.1
                 print("grad_cond : ", torch.norm(grad_cond).item())
 
@@ -670,24 +887,35 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 #     opt.zero_grad()
                 #     loss.backward()
                 #     opt.step()
-                
+
                 iteration += 1
                 # torch.cuda.empty_cache()
 
             if save_denoising_steps:
                 with torch.no_grad():
                     image = self.decode_latent_image(latents.detach())
-                    denoising_steps['opt'][-1].append(image.cpu())
-                
-            torch.set_grad_enabled(False)            
+                    denoising_steps["opt"][-1].append(image.cpu())
+
+            torch.set_grad_enabled(False)
             with torch.no_grad():
 
-                latent_model_input = torch.cat([latents] * 2) #if do_classifier_free_guidance else latents
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                latent_model_input = torch.cat(
+                    [latents] * 2
+                )  # if do_classifier_free_guidance else latents
+                latent_model_input = self.scheduler.scale_model_input(
+                    latent_model_input, t
+                )
                 if self.conf.use_depth:
-                    latent_model_input = torch.cat([latent_model_input, torch.cat([depth]*2, dim=0)], dim=1)
+                    latent_model_input = torch.cat(
+                        [latent_model_input, torch.cat([depth] * 2, dim=0)], dim=1
+                    )
 
-                text_embeddings = torch.cat([uncond_embeddings[t_idx].expand(*cond_embeddings.shape), cond_embeddings])
+                text_embeddings = torch.cat(
+                    [
+                        uncond_embeddings[t_idx].expand(*cond_embeddings.shape),
+                        cond_embeddings,
+                    ]
+                )
 
                 # predict the noise residual
                 unet_output = self.unet(
@@ -697,34 +925,50 @@ class GuidedStableDiffuser(GuidedDiffuser):
                     cross_attention_kwargs=None,
                     return_dict=False,
                 )
-                    
+
                 noise_pred = unet_output[0]
-                
+
                 noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                noise_pred = noise_pred_uncond + 7.5 * (noise_pred_text - noise_pred_uncond)
+                noise_pred = noise_pred_uncond + 7.5 * (
+                    noise_pred_text - noise_pred_uncond
+                )
 
                 # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
+                latents = self.scheduler.step(
+                    noise_pred, t, latents, **extra_step_kwargs, return_dict=False
+                )[0]
                 torch.cuda.empty_cache()
 
                 if save_denoising_steps:
                     image = self.decode_latent_image(latents.detach())
-                    denoising_steps['opt'][-1].append(image.cpu())
-                    
+                    denoising_steps["opt"][-1].append(image.cpu())
+
         with torch.no_grad():
-            image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-            image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
-        
+            image = self.vae.decode(
+                latents / self.vae.config.scaling_factor, return_dict=False
+            )[0]
+            image = VaeImageProcessor(
+                vae_scale_factor=self.vae.config.scaling_factor
+            ).postprocess(image, output_type="pt")
+
         if save_denoising_steps:
             return image, denoising_steps
         else:
             return image
 
     def guided_mpi_scene_comp(
-            self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str,
-            activations_orig: List[torch.Tensor],
-            correspondences: torch.Tensor, fg_weight: float = None, bg_weight: float = None, save_denoising_steps: bool = False):
-        
+        self,
+        latents: torch.Tensor,
+        depth: torch.Tensor,
+        uncond_embeddings: torch.Tensor,
+        prompt: str,
+        activations_orig: List[torch.Tensor],
+        correspondences: torch.Tensor,
+        fg_weight: float = None,
+        bg_weight: float = None,
+        save_denoising_steps: bool = False,
+    ):
+
         strength = 1.0
 
         if fg_weight is None:
@@ -732,45 +976,66 @@ class GuidedStableDiffuser(GuidedDiffuser):
         if bg_weight is None:
             bg_weight = self.conf.bg_weight
 
-        if(len(activations_orig) == 2):
-            activations_back, activations_fore = activations_orig[0], activations_orig[1]
+        if len(activations_orig) == 2:
+            activations_back, activations_fore = (
+                activations_orig[0],
+                activations_orig[1],
+            )
         else:
             print("Activations list length is not 2")
             activations_back, activations_mid, activations_fore = activations_orig
 
         with torch.no_grad():
-        
+
             generator = torch.manual_seed(self.conf.seed)
 
-            #Set timesteps
+            # Set timesteps
             self.scheduler.set_timesteps(self.conf.num_timesteps, device=self.device)
-            timesteps, num_inference_steps = self.get_timesteps(self.conf.num_timesteps, strength)
-            
-            if(len(activations_orig) == 2):
+            timesteps, num_inference_steps = self.get_timesteps(
+                self.conf.num_timesteps, strength
+            )
+
+            if len(activations_orig) == 2:
                 print("Activations list length is 2")
-                processed_correspondences = self.process_correspondences(correspondences, img_res=depth.shape[-1], bg_erosion=self.conf.bg_erosion)
+                processed_correspondences = self.process_correspondences(
+                    correspondences,
+                    img_res=depth.shape[-1],
+                    bg_erosion=self.conf.bg_erosion,
+                )
                 bg_correspondences = processed_correspondences
                 fg_correspondences = processed_correspondences
             else:
-                bg_correspondences = self.process_correspondences(correspondences[0], img_res=depth.shape[-1], bg_erosion=self.conf.bg_erosion)
-                mid_correspondences = self.process_correspondences(correspondences[1], img_res=depth.shape[-1], bg_erosion=self.conf.bg_erosion)
-                fg_correspondences = self.process_correspondences(correspondences[2], img_res=depth.shape[-1], bg_erosion=self.conf.bg_erosion)
-            
+                bg_correspondences = self.process_correspondences(
+                    correspondences[0],
+                    img_res=depth.shape[-1],
+                    bg_erosion=self.conf.bg_erosion,
+                )
+                mid_correspondences = self.process_correspondences(
+                    correspondences[1],
+                    img_res=depth.shape[-1],
+                    bg_erosion=self.conf.bg_erosion,
+                )
+                fg_correspondences = self.process_correspondences(
+                    correspondences[2],
+                    img_res=depth.shape[-1],
+                    bg_erosion=self.conf.bg_erosion,
+                )
+
             if self.conf.use_depth:
                 depth = self.init_depth(depth)
-            
+
             # Encode Prompt
             input_ids = self.tokenizer(
-                    [prompt],
-                    padding="max_length",
-                    truncation=True,
-                    max_length=self.tokenizer.model_max_length,
-                    return_tensors="pt",
-                )
+                [prompt],
+                padding="max_length",
+                truncation=True,
+                max_length=self.tokenizer.model_max_length,
+                return_tensors="pt",
+            )
 
             cond_embeddings = self.text_encoder(input_ids.input_ids.to(self.device))[0]
 
-            if(uncond_embeddings is None):
+            if uncond_embeddings is None:
                 input_ids_uncond = self.tokenizer(
                     [""],
                     padding="max_length",
@@ -778,32 +1043,50 @@ class GuidedStableDiffuser(GuidedDiffuser):
                     truncation=True,
                     return_tensors="pt",
                 )
-                uncond_embeddings = self.text_encoder(input_ids_uncond.input_ids.to(self.device))[0]
+                uncond_embeddings = self.text_encoder(
+                    input_ids_uncond.input_ids.to(self.device)
+                )[0]
                 uncond_embeddings = uncond_embeddings.expand(len(timesteps), -1, -1, -1)
 
             extra_step_kwargs = self.prepare_extra_step_kwargs(generator, 0.0)
 
             if save_denoising_steps:
                 denoising_steps = {
-                    'opt': [],
-                    'post-opt': [],
+                    "opt": [],
+                    "post-opt": [],
                 }
-            
+
             # create guidance weight schedule
             fg_weight *= 30  # 30
             bg_weight *= 30  # 30
             denoising_weight_schedule = []
             if self.conf.guidance_schedule_type == "constant":
-                fg_weight_falloff = np.linspace(fg_weight, fg_weight, self.conf.guidance_max_step)
-                bg_weight_falloff = np.linspace(bg_weight, bg_weight, self.conf.guidance_max_step)
+                fg_weight_falloff = np.linspace(
+                    fg_weight, fg_weight, self.conf.guidance_max_step
+                )
+                bg_weight_falloff = np.linspace(
+                    bg_weight, bg_weight, self.conf.guidance_max_step
+                )
             elif self.conf.guidance_schedule_type == "linear":
-                fg_weight_falloff = np.linspace(fg_weight, 0.0, self.conf.guidance_max_step)
-                bg_weight_falloff = np.linspace(bg_weight, 0.0, self.conf.guidance_max_step)
+                fg_weight_falloff = np.linspace(
+                    fg_weight, 0.0, self.conf.guidance_max_step
+                )
+                bg_weight_falloff = np.linspace(
+                    bg_weight, 0.0, self.conf.guidance_max_step
+                )
             elif self.conf.guidance_schedule_type == "quadratic":
-                fg_weight_falloff = np.linspace(np.sqrt(fg_weight), 0.0, self.conf.guidance_max_step)**2
-                bg_weight_falloff = np.linspace(np.sqrt(bg_weight), 0.0, self.conf.guidance_max_step)**2
+                fg_weight_falloff = (
+                    np.linspace(np.sqrt(fg_weight), 0.0, self.conf.guidance_max_step)
+                    ** 2
+                )
+                bg_weight_falloff = (
+                    np.linspace(np.sqrt(bg_weight), 0.0, self.conf.guidance_max_step)
+                    ** 2
+                )
             else:
-                raise ValueError(f"Unknown guidance schedule type: {self.conf.guidance_schedule_type}")
+                raise ValueError(
+                    f"Unknown guidance schedule type: {self.conf.guidance_schedule_type}"
+                )
             for t_idx in range(self.conf.guidance_max_step):
 
                 fg_weights = [0.0, 0.2, 8.5]
@@ -814,11 +1097,16 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 # bg_weights = [0.0, 0.4, 1.5] # no noise could be bit better (increasing lr seem to be better)
                 # fg_weights = [0.0, 0.2, 7.5]
                 # bg_weights = [0.0, 0.2, 1.5]
-                denoising_weight_schedule.append((
-                    t_idx,
-                    (np.array(fg_weights)*fg_weight_falloff[t_idx]).tolist(),
-                    (np.array(bg_weights)*bg_weight_falloff[t_idx]).tolist()))
-            denoising_weight_schedule.append((self.conf.guidance_max_step, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]))
+                denoising_weight_schedule.append(
+                    (
+                        t_idx,
+                        (np.array(fg_weights) * fg_weight_falloff[t_idx]).tolist(),
+                        (np.array(bg_weights) * bg_weight_falloff[t_idx]).tolist(),
+                    )
+                )
+            denoising_weight_schedule.append(
+                (self.conf.guidance_max_step, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+            )
 
             optimization_weight_schedule = [
                 (0, [3.5, 3.5, 3.5], [2.5, 2.5, 2.5]),
@@ -829,36 +1117,45 @@ class GuidedStableDiffuser(GuidedDiffuser):
             ]
             guidance_weight_schedule = StepGuidanceWeightSchedule(
                 denoising_steps=denoising_weight_schedule,
-                optimization_steps=optimization_weight_schedule)
-        
+                optimization_steps=optimization_weight_schedule,
+            )
+
         # latents = latents.requires_grad_(True)
 
         for t_idx, t in enumerate(tqdm(timesteps)):
-            
+
             torch.set_grad_enabled(True)
             # with torch.enable_grad():
             latents = latents.requires_grad_(True)
 
-            activations_size = (activations_fore[2][t_idx].shape[-2], activations_fore[2][t_idx].shape[-1])
+            activations_size = (
+                activations_fore[2][t_idx].shape[-2],
+                activations_fore[2][t_idx].shape[-1],
+            )
 
             if save_denoising_steps:
-                denoising_steps['opt'].append([])
-                        
+                denoising_steps["opt"].append([])
+
             # opt = torch.optim.Adam(params=[latents], lr=0.01)
             # opt = torch.optim.SGD(params=[latents], lr=0.1)
 
             iteration = 0
-            while iteration < self.conf.num_optsteps and t_idx < self.conf.guidance_max_step:
+            while (
+                iteration < self.conf.num_optsteps
+                and t_idx < self.conf.guidance_max_step
+            ):
 
                 # latents = latents.detach().requires_grad_(True)
-                
+
                 # latents = latents.requires_grad_(True)
                 latent_model_input = latents
 
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                latent_model_input = self.scheduler.scale_model_input(
+                    latent_model_input, t
+                )
                 if self.conf.use_depth:
                     latent_model_input = torch.cat([latent_model_input, depth], dim=1)
-                                
+
                 # predict the noise residual
                 unet_output = self.unet(
                     latent_model_input,
@@ -867,7 +1164,7 @@ class GuidedStableDiffuser(GuidedDiffuser):
                     cross_attention_kwargs=None,
                     return_dict=False,
                 )
-                    
+
                 noise_pred = unet_output[0]
                 activations = [unet_output[4], unet_output[5], unet_output[6]]
 
@@ -876,33 +1173,43 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 # if(t_idx < 3):
                 #     bgw = fgw
                 #     fgw = [0.0, 0.0, 0.0]
-                    
 
                 loss = 0.0
                 for act_idx in range(len(activations_fore)):
                     if fgw != 0.0:
                         loss += fgw[act_idx] * compute_foreground_loss(
-                            activations=activations[act_idx][0], activations_orig=activations_fore[act_idx][t_idx],
+                            activations=activations[act_idx][0],
+                            activations_orig=activations_fore[act_idx][t_idx],
                             processed_correspondences=fg_correspondences,
-                            patch_size=self.conf.fg_patch_size, activations_size=activations_size)
+                            patch_size=self.conf.fg_patch_size,
+                            activations_size=activations_size,
+                        )
                     if bgw != 0.0:
                         loss += bgw[act_idx] * compute_background_loss(
-                            activations=activations[act_idx][0], activations_orig=activations_back[act_idx][t_idx],
+                            activations=activations[act_idx][0],
+                            activations_orig=activations_back[act_idx][t_idx],
                             processed_correspondences=bg_correspondences,
-                            patch_size=self.conf.bg_patch_size, activations_size=activations_size, loss_type=self.conf.bg_loss_type)
-                    
-                    if(len(activations_orig) == 3):
-                        if(fgw != 0.0):
+                            patch_size=self.conf.bg_patch_size,
+                            activations_size=activations_size,
+                            loss_type=self.conf.bg_loss_type,
+                        )
+
+                    if len(activations_orig) == 3:
+                        if fgw != 0.0:
                             loss += fgw[act_idx] * compute_foreground_loss(
-                                activations=activations[act_idx][0], activations_orig=activations_mid[act_idx][t_idx],
+                                activations=activations[act_idx][0],
+                                activations_orig=activations_mid[act_idx][t_idx],
                                 processed_correspondences=mid_correspondences,
-                                patch_size=self.conf.fg_patch_size, activations_size=activations_size)
+                                patch_size=self.conf.fg_patch_size,
+                                activations_size=activations_size,
+                            )
 
-
-                if(loss == 0):
+                if loss == 0:
                     grad_cond = 0
                 else:
-                    grad_cond = torch.autograd.grad(loss.requires_grad_(True), [latents])[0]
+                    grad_cond = torch.autograd.grad(
+                        loss.requires_grad_(True), [latents]
+                    )[0]
                 latents = latents - grad_cond * 0.1  # 0.1
                 # print("grad_cond : ", torch.norm(grad_cond).item())
 
@@ -910,24 +1217,35 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 #     opt.zero_grad()
                 #     loss.backward()
                 #     opt.step()
-                
+
                 iteration += 1
                 # torch.cuda.empty_cache()
 
             if save_denoising_steps:
                 with torch.no_grad():
                     image = self.decode_latent_image(latents.detach())
-                    denoising_steps['opt'][-1].append(image.cpu())
-                
-            torch.set_grad_enabled(False)            
+                    denoising_steps["opt"][-1].append(image.cpu())
+
+            torch.set_grad_enabled(False)
             with torch.no_grad():
 
-                latent_model_input = torch.cat([latents] * 2) #if do_classifier_free_guidance else latents
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                latent_model_input = torch.cat(
+                    [latents] * 2
+                )  # if do_classifier_free_guidance else latents
+                latent_model_input = self.scheduler.scale_model_input(
+                    latent_model_input, t
+                )
                 if self.conf.use_depth:
-                    latent_model_input = torch.cat([latent_model_input, torch.cat([depth]*2, dim=0)], dim=1)
+                    latent_model_input = torch.cat(
+                        [latent_model_input, torch.cat([depth] * 2, dim=0)], dim=1
+                    )
 
-                text_embeddings = torch.cat([uncond_embeddings[t_idx].expand(*cond_embeddings.shape), cond_embeddings])
+                text_embeddings = torch.cat(
+                    [
+                        uncond_embeddings[t_idx].expand(*cond_embeddings.shape),
+                        cond_embeddings,
+                    ]
+                )
 
                 # predict the noise residual
                 unet_output = self.unet(
@@ -937,24 +1255,32 @@ class GuidedStableDiffuser(GuidedDiffuser):
                     cross_attention_kwargs=None,
                     return_dict=False,
                 )
-                    
+
                 noise_pred = unet_output[0]
-                
+
                 noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                noise_pred = noise_pred_uncond + 7.5 * (noise_pred_text - noise_pred_uncond)
+                noise_pred = noise_pred_uncond + 7.5 * (
+                    noise_pred_text - noise_pred_uncond
+                )
 
                 # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
+                latents = self.scheduler.step(
+                    noise_pred, t, latents, **extra_step_kwargs, return_dict=False
+                )[0]
                 torch.cuda.empty_cache()
 
                 if save_denoising_steps:
                     image = self.decode_latent_image(latents.detach())
-                    denoising_steps['opt'][-1].append(image.cpu())
-                    
+                    denoising_steps["opt"][-1].append(image.cpu())
+
         with torch.no_grad():
-            image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-            image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
-        
+            image = self.vae.decode(
+                latents / self.vae.config.scaling_factor, return_dict=False
+            )[0]
+            image = VaeImageProcessor(
+                vae_scale_factor=self.vae.config.scaling_factor
+            ).postprocess(image, output_type="pt")
+
         if save_denoising_steps:
             return image, denoising_steps
         else:
@@ -962,42 +1288,51 @@ class GuidedStableDiffuser(GuidedDiffuser):
 
     def process_correspondences(self, correspondences, img_res, bg_erosion=0):
 
-        original_x, original_y, transformed_x, transformed_y = unpack_correspondences(correspondences)
+        original_x, original_y, transformed_x, transformed_y = unpack_correspondences(
+            correspondences
+        )
 
         # Since np.split creates arrays of shape (N, 1), we'll squeeze them to get back to shape (N,)
         original_x = original_x.squeeze()
         original_y = original_y.squeeze()
         transformed_x = transformed_x.squeeze()
         transformed_y = transformed_y.squeeze()
-        
+
         # bg_mask_orig = np.zeros((img_res, img_res))
-        
+
         # bg_mask_trans = np.zeros((img_res, img_res))
-        
+
         visible_orig_x = []
         visible_orig_y = []
         visible_trans_x = []
-        visible_trans_y = []    
-        
+        visible_trans_y = []
+
         for x, y, tx, ty in zip(original_x, original_y, transformed_x, transformed_y):
-            if((tx >= 0 and tx < img_res) and (ty >= 0 and ty < img_res)):
+            if (tx >= 0 and tx < img_res) and (ty >= 0 and ty < img_res):
                 visible_orig_x.append(x)
                 visible_orig_y.append(y)
                 visible_trans_x.append(tx)
                 visible_trans_y.append(ty)
-        
+
         # for x, y in zip(visible_orig_x, visible_orig_y):
         #     bg_mask_orig[y,x] = 1
 
         # for x, y in zip(visible_trans_x, visible_trans_y):
-        #     bg_mask_trans[y,x] = 1        
-        
-        original_x, original_y, transformed_x, transformed_y = (
-            np.array(visible_orig_x, dtype=np.int64), np.array(visible_orig_y, dtype=np.int64),
-            np.array(visible_trans_x, dtype=np.int64), np.array(visible_trans_y, dtype=np.int64))
+        #     bg_mask_trans[y,x] = 1
 
-        original_x, original_y = original_x // (img_res // 64), original_y // (img_res // 64)
-        transformed_x, transformed_y = transformed_x // (img_res // 64), transformed_y // (img_res // 64)
+        original_x, original_y, transformed_x, transformed_y = (
+            np.array(visible_orig_x, dtype=np.int64),
+            np.array(visible_orig_y, dtype=np.int64),
+            np.array(visible_trans_x, dtype=np.int64),
+            np.array(visible_trans_y, dtype=np.int64),
+        )
+
+        original_x, original_y = original_x // (img_res // 64), original_y // (
+            img_res // 64
+        )
+        transformed_x, transformed_y = transformed_x // (
+            img_res // 64
+        ), transformed_y // (img_res // 64)
 
         bg_mask_orig = np.ones(shape=[64, 64], dtype=np.bool_)
         if len(original_x) > 0:
@@ -1008,28 +1343,32 @@ class GuidedStableDiffuser(GuidedDiffuser):
             bg_mask_trans[transformed_y, transformed_x] = False
 
         if bg_erosion > 0:
-            bg_mask_orig = scipy.ndimage.binary_erosion(bg_mask_orig, iterations=bg_erosion)
-            bg_mask_trans = scipy.ndimage.binary_erosion(bg_mask_trans, iterations=bg_erosion)
+            bg_mask_orig = scipy.ndimage.binary_erosion(
+                bg_mask_orig, iterations=bg_erosion
+            )
+            bg_mask_trans = scipy.ndimage.binary_erosion(
+                bg_mask_trans, iterations=bg_erosion
+            )
 
         bg_y, bg_x = np.nonzero(bg_mask_orig & bg_mask_trans)
         bg_y_orig, bg_x_orig = np.nonzero(bg_mask_orig)
         bg_y_trans, bg_x_trans = np.nonzero(bg_mask_trans)
 
         processed_correspondences = {
-            'original_x': original_x,
-            'original_y': original_y,
-            'transformed_x': transformed_x,
-            'transformed_y': transformed_y,
-            'background_x': bg_x,
-            'background_y': bg_y,
-            'background_x_orig': bg_x_orig,
-            'background_y_orig': bg_y_orig,
-            'background_x_trans': bg_x_trans,
-            'background_y_trans': bg_y_trans,
+            "original_x": original_x,
+            "original_y": original_y,
+            "transformed_x": transformed_x,
+            "transformed_y": transformed_y,
+            "background_x": bg_x,
+            "background_y": bg_y,
+            "background_x_orig": bg_x_orig,
+            "background_y_orig": bg_y_orig,
+            "background_x_trans": bg_x_trans,
+            "background_y_trans": bg_y_trans,
         }
 
         return processed_correspondences
-    
+
     def get_timesteps(self, num_inference_steps, strength):
         # get the original timestep using init_timestep
         init_timestep = min(int(num_inference_steps * strength), num_inference_steps)
@@ -1045,16 +1384,21 @@ class GuidedStableDiffuser(GuidedDiffuser):
         # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
         # and should be between [0, 1]
 
-        accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())
+        accepts_eta = "eta" in set(
+            inspect.signature(self.scheduler.step).parameters.keys()
+        )
         extra_step_kwargs = {}
         if accepts_eta:
             extra_step_kwargs["eta"] = eta
 
         # check if the scheduler accepts generator
-        accepts_generator = "generator" in set(inspect.signature(self.scheduler.step).parameters.keys())
+        accepts_generator = "generator" in set(
+            inspect.signature(self.scheduler.step).parameters.keys()
+        )
         if accepts_generator:
             extra_step_kwargs["generator"] = generator
         return extra_step_kwargs
+
 
 class GuidanceWeightSchedule:
 
@@ -1062,36 +1406,46 @@ class GuidanceWeightSchedule:
         pass
 
     def __call__(self, denoising_step: int, optimization_step: int):
-        fg_weights = [1.0]*3
-        bg_weights = [1.0]*3
+        fg_weights = [1.0] * 3
+        bg_weights = [1.0] * 3
         return fg_weights, bg_weights
+
 
 class StepGuidanceWeightSchedule(GuidanceWeightSchedule):
 
-    def __init__(
-            self,
-            denoising_steps,
-            optimization_steps):
+    def __init__(self, denoising_steps, optimization_steps):
 
         super().__init__()
-        
-        if not all(len(fg_weights) == len(bg_weights) for _, fg_weights, bg_weights in denoising_steps):
-            raise ValueError("Number of foreground and background weights do not match.")
-        if not all(len(fg_weights) == len(bg_weights) for _, fg_weights, bg_weights in optimization_steps):
-            raise ValueError("Number of foreground and background weights do not match.")
+
+        if not all(
+            len(fg_weights) == len(bg_weights)
+            for _, fg_weights, bg_weights in denoising_steps
+        ):
+            raise ValueError(
+                "Number of foreground and background weights do not match."
+            )
+        if not all(
+            len(fg_weights) == len(bg_weights)
+            for _, fg_weights, bg_weights in optimization_steps
+        ):
+            raise ValueError(
+                "Number of foreground and background weights do not match."
+            )
         if len(denoising_steps[0][1]) != len(optimization_steps[0][1]):
-            raise ValueError("Number of denoising and optimization weights do not match.")
+            raise ValueError(
+                "Number of denoising and optimization weights do not match."
+            )
 
         self.denoising_steps = sorted(denoising_steps, key=lambda step: step[0])
         self.optimization_steps = sorted(optimization_steps, key=lambda step: step[0])
 
     def __call__(self, denoising_step: int, optimization_step: int):
-        
+
         denoising_fg_weights = None
         denoising_bg_weights = None
         optimization_fg_weights = None
         optimization_bg_weights = None
-        
+
         for step, fg_weights, bg_weights in reversed(self.denoising_steps):
             if denoising_step >= step:
                 denoising_fg_weights = fg_weights
@@ -1103,11 +1457,24 @@ class StepGuidanceWeightSchedule(GuidanceWeightSchedule):
                 optimization_bg_weights = bg_weights
                 break
 
-        if any(weight is None for weight in [denoising_fg_weights, denoising_bg_weights, optimization_fg_weights, optimization_bg_weights]):
-            raise ValueError(f"Could not find weights for denoising step {denoising_step} and optimization step {optimization_step}.")
+        if any(
+            weight is None
+            for weight in [
+                denoising_fg_weights,
+                denoising_bg_weights,
+                optimization_fg_weights,
+                optimization_bg_weights,
+            ]
+        ):
+            raise ValueError(
+                f"Could not find weights for denoising step {denoising_step} and optimization step {optimization_step}."
+            )
 
-        fg_weights = [dw * ow for dw, ow in zip(denoising_fg_weights, optimization_fg_weights)]
-        bg_weights = [dw * ow for dw, ow in zip(denoising_bg_weights, optimization_bg_weights)]
-        
+        fg_weights = [
+            dw * ow for dw, ow in zip(denoising_fg_weights, optimization_fg_weights)
+        ]
+        bg_weights = [
+            dw * ow for dw, ow in zip(denoising_bg_weights, optimization_bg_weights)
+        ]
+
         return fg_weights, bg_weights
-    

@@ -32,14 +32,25 @@ from tqdm import tqdm
 from zoedepth.data.data_mono import DepthDataLoader
 from zoedepth.models.builder import build_model
 from zoedepth.utils.arg_utils import parse_unknown
-from zoedepth.utils.config import change_dataset, get_config, ALL_EVAL_DATASETS, ALL_INDOOR, ALL_OUTDOOR
-from zoedepth.utils.misc import (RunningAverageDict, colors, compute_metrics,
-                        count_parameters)
+from zoedepth.utils.config import (
+    change_dataset,
+    get_config,
+    ALL_EVAL_DATASETS,
+    ALL_INDOOR,
+    ALL_OUTDOOR,
+)
+from zoedepth.utils.misc import (
+    RunningAverageDict,
+    colors,
+    compute_metrics,
+    count_parameters,
+)
 
 
 @torch.no_grad()
 def infer(model, images, **kwargs):
     """Inference with flip augmentation"""
+
     # images.shape = N, C, H, W
     def get_depth_from_prediction(pred):
         if isinstance(pred, torch.Tensor):
@@ -47,7 +58,7 @@ def infer(model, images, **kwargs):
         elif isinstance(pred, (list, tuple)):
             pred = pred[-1]
         elif isinstance(pred, dict):
-            pred = pred['metric_depth'] if 'metric_depth' in pred else pred['out']
+            pred = pred["metric_depth"] if "metric_depth" in pred else pred["out"]
         else:
             raise NotImplementedError(f"Unknown output type {type(pred)}")
         return pred
@@ -69,19 +80,21 @@ def evaluate(model, test_loader, config, round_vals=True, round_precision=3):
     model.eval()
     metrics = RunningAverageDict()
     for i, sample in tqdm(enumerate(test_loader), total=len(test_loader)):
-        if 'has_valid_depth' in sample:
-            if not sample['has_valid_depth']:
+        if "has_valid_depth" in sample:
+            if not sample["has_valid_depth"]:
                 continue
-        image, depth = sample['image'], sample['depth']
+        image, depth = sample["image"], sample["depth"]
         image, depth = image.cuda(), depth.cuda()
         depth = depth.squeeze().unsqueeze(0).unsqueeze(0)
-        focal = sample.get('focal', torch.Tensor(
-            [715.0873]).cuda())  # This magic number (focal) is only used for evaluating BTS model
-        pred = infer(model, image, dataset=sample['dataset'][0], focal=focal)
+        focal = sample.get(
+            "focal", torch.Tensor([715.0873]).cuda()
+        )  # This magic number (focal) is only used for evaluating BTS model
+        pred = infer(model, image, dataset=sample["dataset"][0], focal=focal)
 
         # Save image, depth, pred for visualization
         if "save_images" in config and config.save_images:
             import os
+
             # print("Saving images ...")
             from PIL import Image
             import torchvision.transforms as transforms
@@ -96,34 +109,43 @@ def evaluate(model, test_loader, config, round_vals=True, round_precision=3):
             Image.fromarray(d).save(os.path.join(config.save_images, f"{i}_depth.png"))
             Image.fromarray(p).save(os.path.join(config.save_images, f"{i}_pred.png"))
 
-
-
         # print(depth.shape, pred.shape)
         metrics.update(compute_metrics(depth, pred, config=config))
 
     if round_vals:
-        def r(m): return round(m, round_precision)
+
+        def r(m):
+            return round(m, round_precision)
+
     else:
-        def r(m): return m
+
+        def r(m):
+            return m
+
     metrics = {k: r(v) for k, v in metrics.get_value().items()}
     return metrics
 
+
 def main(config):
     model = build_model(config)
-    test_loader = DepthDataLoader(config, 'online_eval').data
+    test_loader = DepthDataLoader(config, "online_eval").data
     model = model.cuda()
     metrics = evaluate(model, test_loader, config)
     print(f"{colors.fg.green}")
     print(metrics)
     print(f"{colors.reset}")
-    metrics['#params'] = f"{round(count_parameters(model, include_all=True)/1e6, 2)}M"
+    metrics["#params"] = f"{round(count_parameters(model, include_all=True)/1e6, 2)}M"
     return metrics
 
 
-def eval_model(model_name, pretrained_resource, dataset='nyu', **kwargs):
+def eval_model(model_name, pretrained_resource, dataset="nyu", **kwargs):
 
     # Load default pretrained resource defined in config if not set
-    overwrite = {**kwargs, "pretrained_resource": pretrained_resource} if pretrained_resource else kwargs
+    overwrite = (
+        {**kwargs, "pretrained_resource": pretrained_resource}
+        if pretrained_resource
+        else kwargs
+    )
     config = get_config(model_name, "eval", dataset, **overwrite)
     # config = change_dataset(config, dataset)  # change the dataset
     pprint(config)
@@ -132,14 +154,27 @@ def eval_model(model_name, pretrained_resource, dataset='nyu', **kwargs):
     return metrics
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-m", "--model", type=str,
-                        required=True, help="Name of the model to evaluate")
-    parser.add_argument("-p", "--pretrained_resource", type=str,
-                        required=False, default="", help="Pretrained resource to use for fetching weights. If not set, default resource from model config is used,  Refer models.model_io.load_state_from_resource for more details.")
-    parser.add_argument("-d", "--dataset", type=str, required=False,
-                        default='nyu', help="Dataset to evaluate on")
+    parser.add_argument(
+        "-m", "--model", type=str, required=True, help="Name of the model to evaluate"
+    )
+    parser.add_argument(
+        "-p",
+        "--pretrained_resource",
+        type=str,
+        required=False,
+        default="",
+        help="Pretrained resource to use for fetching weights. If not set, default resource from model config is used,  Refer models.model_io.load_state_from_resource for more details.",
+    )
+    parser.add_argument(
+        "-d",
+        "--dataset",
+        type=str,
+        required=False,
+        default="nyu",
+        help="Dataset to evaluate on",
+    )
 
     args, unknown_args = parser.parse_known_args()
     overwrite_kwargs = parse_unknown(unknown_args)
@@ -154,7 +189,11 @@ if __name__ == '__main__':
         datasets = args.dataset.split(",")
     else:
         datasets = [args.dataset]
-    
+
     for dataset in datasets:
-        eval_model(args.model, pretrained_resource=args.pretrained_resource,
-                    dataset=dataset, **overwrite_kwargs)
+        eval_model(
+            args.model,
+            pretrained_resource=args.pretrained_resource,
+            dataset=dataset,
+            **overwrite_kwargs,
+        )

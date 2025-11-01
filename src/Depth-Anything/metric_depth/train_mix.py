@@ -72,8 +72,7 @@ def load_ckpt(config, model, checkpoint_dir="./checkpoints", ckpt_type="best"):
         checkpoint = config.checkpoint
     elif hasattr(config, "ckpt_pattern"):
         pattern = config.ckpt_pattern
-        matches = glob.glob(os.path.join(
-            checkpoint_dir, f"*{pattern}*{ckpt_type}*"))
+        matches = glob.glob(os.path.join(checkpoint_dir, f"*{pattern}*{ckpt_type}*"))
         if not (len(matches) > 0):
             raise ValueError(f"No matches found for the pattern {pattern}")
 
@@ -93,9 +92,9 @@ def main_worker(gpu, ngpus_per_node, config):
         config.gpu = gpu
 
         model = build_model(config)
-        
+
         # print(model)
-        
+
         model = load_ckpt(config, model)
         model = parallelize(config, model)
 
@@ -107,20 +106,22 @@ def main_worker(gpu, ngpus_per_node, config):
         test_loader = MixedNYUKITTI(config, "online_eval").data
 
         trainer = get_trainer(config)(
-            config, model, train_loader, test_loader, device=config.gpu)
+            config, model, train_loader, test_loader, device=config.gpu
+        )
 
         trainer.train()
     finally:
         import wandb
+
         wandb.finish()
 
 
-if __name__ == '__main__':
-    mp.set_start_method('forkserver')
+if __name__ == "__main__":
+    mp.set_start_method("forkserver")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--model", type=str, default="synunet")
-    parser.add_argument("-d", "--dataset", type=str, default='mix')
+    parser.add_argument("-d", "--dataset", type=str, default="mix")
     parser.add_argument("--trainer", type=str, default=None)
 
     args, unknown_args = parser.parse_known_args()
@@ -139,17 +140,16 @@ if __name__ == '__main__':
     config.shared_dict = shared_dict
 
     config.batch_size = config.bs
-    config.mode = 'train'
+    config.mode = "train"
     if config.root != "." and not os.path.isdir(config.root):
         os.makedirs(config.root)
 
     try:
-        node_str = os.environ['SLURM_JOB_NODELIST'].replace(
-            '[', '').replace(']', '')
-        nodes = node_str.split(',')
+        node_str = os.environ["SLURM_JOB_NODELIST"].replace("[", "").replace("]", "")
+        nodes = node_str.split(",")
 
         config.world_size = len(nodes)
-        config.rank = int(os.environ['SLURM_PROCID'])
+        config.rank = int(os.environ["SLURM_PROCID"])
         # config.save_dir = "/ibex/scratch/bhatsf/videodepth/checkpoints"
 
     except KeyError as e:
@@ -162,9 +162,9 @@ if __name__ == '__main__':
 
         print(config.rank)
         port = np.random.randint(15000, 15025)
-        config.dist_url = 'tcp://{}:{}'.format(nodes[0], port)
+        config.dist_url = "tcp://{}:{}".format(nodes[0], port)
         print(config.dist_url)
-        config.dist_backend = 'nccl'
+        config.dist_backend = "nccl"
         config.gpu = None
 
     ngpus_per_node = torch.cuda.device_count()
@@ -174,8 +174,7 @@ if __name__ == '__main__':
     pprint(config)
     if config.distributed:
         config.world_size = ngpus_per_node * config.world_size
-        mp.spawn(main_worker, nprocs=ngpus_per_node,
-                 args=(ngpus_per_node, config))
+        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, config))
     else:
         if ngpus_per_node == 1:
             config.gpu = 0

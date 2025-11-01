@@ -30,7 +30,10 @@ def _make_bool_str(b: bool) -> str:
     return "yes" if b else "no"
 
 
-def _make_sample_transform(image_transform: Optional[Callable] = None, target_transform: Optional[Callable] = None):
+def _make_sample_transform(
+    image_transform: Optional[Callable] = None,
+    target_transform: Optional[Callable] = None,
+):
     def transform(sample):
         image, target = sample
         if image_transform is not None:

@@ -38,7 +38,9 @@ class Trainer(object):
 
         job_env = submitit.JobEnvironment()
         self.args.output_dir = self.args.output_dir.replace("%j", str(job_env.job_id))
-        logger.info(f"Process group: {job_env.num_tasks} tasks, rank: {job_env.global_rank}")
+        logger.info(
+            f"Process group: {job_env.num_tasks} tasks, rank: {job_env.global_rank}"
+        )
         logger.info(f"Args: {self.args}")
 
 

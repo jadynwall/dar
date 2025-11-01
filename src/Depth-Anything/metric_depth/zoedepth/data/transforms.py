@@ -30,8 +30,7 @@ import numpy as np
 
 
 class RandomFliplr(object):
-    """Horizontal flip of the sample with given probability.
-    """
+    """Horizontal flip of the sample with given probability."""
 
     def __init__(self, probability=0.5):
         """Init.
@@ -95,8 +94,7 @@ def apply_min_size(sample, size, image_interpolation_method=cv2.INTER_AREA):
 
 
 class RandomCrop(object):
-    """Get a random crop of the sample with the given size (width, height).
-    """
+    """Get a random crop of the sample with the given size (width, height)."""
 
     def __init__(
         self,
@@ -144,16 +142,15 @@ class RandomCrop(object):
 
             if len(sample[k].shape) >= 2:
                 sample[k] = v[
-                    offset[0]: offset[0] + self.__size[0],
-                    offset[1]: offset[1] + self.__size[1],
+                    offset[0] : offset[0] + self.__size[0],
+                    offset[1] : offset[1] + self.__size[1],
                 ]
 
         return sample
 
 
 class Resize(object):
-    """Resize sample to given size (width, height).
-    """
+    """Resize sample to given size (width, height)."""
 
     def __init__(
         self,
@@ -203,12 +200,10 @@ class Resize(object):
         y = (np.round(x / self.__multiple_of) * self.__multiple_of).astype(int)
 
         if max_val is not None and y > max_val:
-            y = (np.floor(x / self.__multiple_of)
-                 * self.__multiple_of).astype(int)
+            y = (np.floor(x / self.__multiple_of) * self.__multiple_of).astype(int)
 
         if y < min_val:
-            y = (np.ceil(x / self.__multiple_of)
-                 * self.__multiple_of).astype(int)
+            y = (np.ceil(x / self.__multiple_of) * self.__multiple_of).astype(int)
 
         return y
 
@@ -265,8 +260,7 @@ class Resize(object):
             new_height = self.constrain_to_multiple_of(scale_height * height)
             new_width = self.constrain_to_multiple_of(scale_width * width)
         else:
-            raise ValueError(
-                f"resize_method {self.__resize_method} not implemented")
+            raise ValueError(f"resize_method {self.__resize_method} not implemented")
 
         return (new_width, new_height)
 
@@ -274,7 +268,8 @@ class Resize(object):
         top = bottom = (self.__height - sample.shape[0]) // 2
         left = right = (self.__width - sample.shape[1]) // 2
         sample = cv2.copyMakeBorder(
-            sample, top, bottom, left, right, cv2.BORDER_CONSTANT, None, 0)
+            sample, top, bottom, left, right, cv2.BORDER_CONSTANT, None, 0
+        )
         return sample
 
     def __call__(self, sample):
@@ -301,13 +296,11 @@ class Resize(object):
                 )
 
                 if self.__letter_box:
-                    sample["disparity"] = self.make_letter_box(
-                        sample["disparity"])
+                    sample["disparity"] = self.make_letter_box(sample["disparity"])
 
             if "depth" in sample:
                 sample["depth"] = cv2.resize(
-                    sample["depth"], (width,
-                                      height), interpolation=cv2.INTER_NEAREST
+                    sample["depth"], (width, height), interpolation=cv2.INTER_NEAREST
                 )
 
                 if self.__letter_box:
@@ -337,8 +330,7 @@ class ResizeFixed(object):
         )
 
         sample["disparity"] = cv2.resize(
-            sample["disparity"], self.__size[::-
-                                             1], interpolation=cv2.INTER_NEAREST
+            sample["disparity"], self.__size[::-1], interpolation=cv2.INTER_NEAREST
         )
 
         sample["mask"] = cv2.resize(
@@ -385,16 +377,14 @@ class Rescale(object):
                 (disp[mask] - min_val) / (max_val - min_val) * self.__max_val
             )
         else:
-            sample["disparity"][mask] = np.ones_like(
-                disp[mask]) * self.__max_val / 2.0
+            sample["disparity"][mask] = np.ones_like(disp[mask]) * self.__max_val / 2.0
 
         return sample
 
 
 # mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
 class NormalizeImage(object):
-    """Normlize image by given mean and std.
-    """
+    """Normlize image by given mean and std."""
 
     def __init__(self, mean, std):
         self.__mean = mean
@@ -407,8 +397,7 @@ class NormalizeImage(object):
 
 
 class DepthToDisparity(object):
-    """Convert depth to disparity. Removes depth from sample.
-    """
+    """Convert depth to disparity. Removes depth from sample."""
 
     def __init__(self, eps=1e-4):
         self.__eps = eps
@@ -429,8 +418,7 @@ class DepthToDisparity(object):
 
 
 class DisparityToDepth(object):
-    """Convert disparity to depth. Removes disparity from sample.
-    """
+    """Convert disparity to depth. Removes disparity from sample."""
 
     def __init__(self, eps=1e-4):
         self.__eps = eps
@@ -446,9 +434,7 @@ class DisparityToDepth(object):
         # exit()
 
         sample["depth"] = np.zeros_like(disp)
-        sample["depth"][disp >= self.__eps] = (
-            1.0 / disp[disp >= self.__eps]
-        )
+        sample["depth"][disp >= self.__eps] = 1.0 / disp[disp >= self.__eps]
 
         del sample["disparity"]
 
@@ -456,8 +442,7 @@ class DisparityToDepth(object):
 
 
 class PrepareForNet(object):
-    """Prepare sample for usage as network input.
-    """
+    """Prepare sample for usage as network input."""
 
     def __init__(self):
         pass

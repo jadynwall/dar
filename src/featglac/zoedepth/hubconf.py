@@ -22,7 +22,7 @@
 
 # File author: Shariq Farooq Bhat
 
-dependencies=['torch']
+dependencies = ["torch"]
 from zoedepth.utils.config import get_config
 from zoedepth.models.builder import build_model
 import numpy as np
@@ -30,13 +30,15 @@ import torch
 
 
 # ZoeD_N
-def ZoeD_N(pretrained=False, midas_model_type="DPT_BEiT_L_384", config_mode="infer", **kwargs):
+def ZoeD_N(
+    pretrained=False, midas_model_type="DPT_BEiT_L_384", config_mode="infer", **kwargs
+):
     """Zoe_M12_N model. This is the version of ZoeDepth that has a single metric head
     Args:
         pretrained (bool): If True, returns a model pre-trained on NYU-Depth-V2
         midas_model_type (str): Midas model type. Should be one of the models as listed in torch.hub.list("intel-isl/MiDaS"). Default: DPT_BEiT_L_384
         config_mode (str): Config mode. Should be one of "infer", "train" or "eval". Default: "infer"
-    
+
     Keyword Args:
         **kwargs: Additional arguments to pass to the model
         The following arguments are supported:
@@ -58,25 +60,32 @@ def ZoeD_N(pretrained=False, midas_model_type="DPT_BEiT_L_384", config_mode="inf
             force_keep_ar (bool): If True, the model will keep the aspect ratio of the input image. Defaults to True.
     """
     if pretrained and midas_model_type != "DPT_BEiT_L_384":
-        raise ValueError(f"Only DPT_BEiT_L_384 MiDaS model is supported for pretrained Zoe_N model, got: {midas_model_type}")
+        raise ValueError(
+            f"Only DPT_BEiT_L_384 MiDaS model is supported for pretrained Zoe_N model, got: {midas_model_type}"
+        )
 
     if not pretrained:
         pretrained_resource = None
     else:
         pretrained_resource = "url::https://github.com/isl-org/ZoeDepth/releases/download/v1.0/ZoeD_M12_N.pt"
 
-    config = get_config("zoedepth", config_mode, pretrained_resource=pretrained_resource, **kwargs)
+    config = get_config(
+        "zoedepth", config_mode, pretrained_resource=pretrained_resource, **kwargs
+    )
     model = build_model(config)
     return model
 
+
 # ZoeD_K
-def ZoeD_K(pretrained=False, midas_model_type="DPT_BEiT_L_384", config_mode="infer", **kwargs):
+def ZoeD_K(
+    pretrained=False, midas_model_type="DPT_BEiT_L_384", config_mode="infer", **kwargs
+):
     """Zoe_M12_K model. This is the version of ZoeDepth that has a single metric head
     Args:
         pretrained (bool): If True, returns a model pre-trained on NYU-Depth-V2
         midas_model_type (str): Midas model type. Should be one of the models as listed in torch.hub.list("intel-isl/MiDaS"). Default: DPT_BEiT_L_384
         config_mode (str): Config mode. Should be one of "infer", "train" or "eval". Default: "infer"
-    
+
     Keyword Args:
         **kwargs: Additional arguments to pass to the model
         The following arguments are supported:
@@ -99,30 +108,41 @@ def ZoeD_K(pretrained=False, midas_model_type="DPT_BEiT_L_384", config_mode="inf
 
     """
     if pretrained and midas_model_type != "DPT_BEiT_L_384":
-        raise ValueError(f"Only DPT_BEiT_L_384 MiDaS model is supported for pretrained Zoe_K model, got: {midas_model_type}")
-    
+        raise ValueError(
+            f"Only DPT_BEiT_L_384 MiDaS model is supported for pretrained Zoe_K model, got: {midas_model_type}"
+        )
+
     if not pretrained:
         pretrained_resource = None
     else:
         pretrained_resource = "url::https://github.com/isl-org/ZoeDepth/releases/download/v1.0/ZoeD_M12_K.pt"
 
-    config = get_config("zoedepth", config_mode, pretrained_resource=pretrained_resource, config_version="kitti", **kwargs)
+    config = get_config(
+        "zoedepth",
+        config_mode,
+        pretrained_resource=pretrained_resource,
+        config_version="kitti",
+        **kwargs,
+    )
     model = build_model(config)
     return model
 
+
 # Zoe_NK
-def ZoeD_NK(pretrained=False, midas_model_type="DPT_BEiT_L_384", config_mode="infer", **kwargs):
+def ZoeD_NK(
+    pretrained=False, midas_model_type="DPT_BEiT_L_384", config_mode="infer", **kwargs
+):
     """ZoeDepthNK model. This is the version of ZoeDepth that has two metric heads and uses a learned router to route to experts.
     Args:
         pretrained (bool): If True, returns a model pre-trained on NYU-Depth-V2
         midas_model_type (str): Midas model type. Should be one of the models as listed in torch.hub.list("intel-isl/MiDaS"). Default: DPT_BEiT_L_384
-    
+
     Keyword Args:
         **kwargs: Additional arguments to pass to the model
         The following arguments are supported:
             train_midas (bool): If True, returns a model that with trainable midas base. Defaults to True
             use_pretrained_midas (bool): If True, returns a model that uses pretrained midas base. Defaults to True
-            bin_conf (List[dict]): A list of dictionaries that contain the bin configuration for each metric head. Each dictionary should contain the following keys: 
+            bin_conf (List[dict]): A list of dictionaries that contain the bin configuration for each metric head. Each dictionary should contain the following keys:
                                     "name" (str, typically same as the dataset name), "n_bins" (int), "min_depth" (float), "max_depth" (float)
                                    The length of this list determines the number of metric heads.
             bin_centers_type (str): "normed" or "softplus". Activation type used for bin centers. For "normed" bin centers, linear normalization trick is applied. This results in bounded bin centers.
@@ -137,18 +157,22 @@ def ZoeD_NK(pretrained=False, midas_model_type="DPT_BEiT_L_384", config_mode="in
 
             min_temp (int): Lower bound for temperature of output probability distribution. Defaults to 0.0212.
             max_temp (int): Upper bound for temperature of output probability distribution. Defaults to 50.
-            
+
             memory_efficient (bool): Whether to use memory efficient version of attractor layers. Memory efficient version is slower but is recommended incase of multiple metric heads in order save GPU memory. Defaults to True.
 
     """
     if pretrained and midas_model_type != "DPT_BEiT_L_384":
-        raise ValueError(f"Only DPT_BEiT_L_384 MiDaS model is supported for pretrained Zoe_NK model, got: {midas_model_type}")
-    
+        raise ValueError(
+            f"Only DPT_BEiT_L_384 MiDaS model is supported for pretrained Zoe_NK model, got: {midas_model_type}"
+        )
+
     if not pretrained:
         pretrained_resource = None
     else:
         pretrained_resource = "url::https://github.com/isl-org/ZoeDepth/releases/download/v1.0/ZoeD_M12_NK.pt"
 
-    config = get_config("zoedepth_nk", config_mode, pretrained_resource=pretrained_resource, **kwargs)
+    config = get_config(
+        "zoedepth_nk", config_mode, pretrained_resource=pretrained_resource, **kwargs
+    )
     model = build_model(config)
     return model

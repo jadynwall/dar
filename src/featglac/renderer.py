@@ -6,11 +6,21 @@ from abc import ABC, abstractmethod
 
 import torch
 
+
 class Camera:
     def __init__(self, intrinsics, extrinsics_R=None, extrinsics_t=None):
         self.intrinsics = intrinsics
-        self.extrinsics_R = extrinsics_R if extrinsics_R is not None else torch.eye(3, device=intrinsics.device, dtype=intrinsics.dtype)
-        self.extrinsics_t = extrinsics_t if extrinsics_t is not None else torch.zeros(3, device=intrinsics.device, dtype=intrinsics.dtype)
+        self.extrinsics_R = (
+            extrinsics_R
+            if extrinsics_R is not None
+            else torch.eye(3, device=intrinsics.device, dtype=intrinsics.dtype)
+        )
+        self.extrinsics_t = (
+            extrinsics_t
+            if extrinsics_t is not None
+            else torch.zeros(3, device=intrinsics.device, dtype=intrinsics.dtype)
+        )
+
 
 @dataclass
 class RendererArgs:
@@ -18,7 +28,7 @@ class RendererArgs:
 
 
 class Renderer(torch.nn.Module, ABC):
-    def __init__(self, args: RendererArgs=RendererArgs()):
+    def __init__(self, args: RendererArgs = RendererArgs()):
         super().__init__()
 
         self.device = torch.device(args.device)

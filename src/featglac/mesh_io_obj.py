@@ -45,7 +45,7 @@ def load_mesh_from_obj(
     #
     with open(filename, "r", errors="ignore") as f:
         rows = f.read().splitlines(keepends=True)
-        
+
     for row in rows:
         row = row_prev + row
         if row.endswith("\\\n"):
@@ -353,18 +353,22 @@ def load_mesh_from_obj(
         m.add_vert_attribute(
             name="uv",
             values=torch.tensor(uv_coords, dtype=torch.float32),
-            faces=torch.tensor(uv_faces, dtype=torch.int64)
-            if uv_faces is not None
-            else None,
+            faces=(
+                torch.tensor(uv_faces, dtype=torch.int64)
+                if uv_faces is not None
+                else None
+            ),
         )
 
     if normals is not None:
         m.add_vert_attribute(
             name="normal",
             values=torch.tensor(normal, dtype=torch.float32),
-            faces=torch.tensor(normal_faces, dtype=torch.int64)
-            if normal_faces is not None
-            else None,
+            faces=(
+                torch.tensor(normal_faces, dtype=torch.int64)
+                if normal_faces is not None
+                else None
+            ),
         )
 
     texture = None
@@ -443,11 +447,7 @@ def save_mesh_to_obj(
             uv_attribute = mesh.vert_attributes["uv"]
             uvs = uv_attribute.values.detach().cpu().numpy()
             for vt in range(uv_attribute.values.shape[0]):
-                f_out.write(
-                    f"vt "
-                    f"{uvs[vt, 0]} "
-                    f"{uvs[vt, 1]} \n"
-                )
+                f_out.write(f"vt " f"{uvs[vt, 0]} " f"{uvs[vt, 1]} \n")
             uv_faces = uv_attribute.faces.detach().cpu().numpy()
             if uv_faces is None:
                 uv_faces = faces

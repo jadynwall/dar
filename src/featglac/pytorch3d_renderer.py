@@ -31,7 +31,9 @@ from featglac.renderer import Renderer, RendererArgs
 @dataclass
 class PyTorch3DRendererArgs(RendererArgs):
     # rasterizer settings
-    output_res: Union[int, Tuple[int, int]] = 512 # (height, width) when providing two values
+    output_res: Union[int, Tuple[int, int]] = (
+        512  # (height, width) when providing two values
+    )
     blur_radius: float = 0
     faces_per_pixel: int = 1
     perspective_correct: bool = True
@@ -476,13 +478,12 @@ class FlatTextureShader(ShaderBase):
             )
         elif self.blend_type == "sigmoid":
             images = sigmoid_alpha_blend(
-                colors=texels,
-                fragments=fragments,
-                blend_params=blend_params
+                colors=texels, fragments=fragments, blend_params=blend_params
             )
         else:
             raise RuntimeError(f"Unsupported blend type: {self.blend_type}")
         return images  # (N, H, W, 3) RGBA image
+
 
 class FlatVertexAttributeShader(ShaderBase):
     """
@@ -530,7 +531,9 @@ class FlatVertexAttributeShader(ShaderBase):
             )
         elif self.blend_type == "sigmoid":
             images = sigmoid_alpha_blend(
-                colors=fragment_attributes, fragments=fragments, blend_params=blend_params
+                colors=fragment_attributes,
+                fragments=fragments,
+                blend_params=blend_params,
             )
         else:
             raise RuntimeError(f"Unsupported blend type: {self.blend_type}")
@@ -622,12 +625,13 @@ class PyTorch3DRenderer(Renderer):
                 )
 
             # convert given meshes to PyTorch3D and join them into a single mesh
-            self._zero_meshes = join_meshes_as_scene(Pytorch3DMeshes(
-                verts=[torch.zeros_like(mesh.verts) for mesh in scene_meshes],
-                faces=[mesh.faces for mesh in scene_meshes],
-                textures=uv_textures,
-            ))
-
+            self._zero_meshes = join_meshes_as_scene(
+                Pytorch3DMeshes(
+                    verts=[torch.zeros_like(mesh.verts) for mesh in scene_meshes],
+                    faces=[mesh.faces for mesh in scene_meshes],
+                    textures=uv_textures,
+                )
+            )
 
     def set_output_layers(self, output_names: List[str]):
         """
@@ -688,10 +692,10 @@ class PyTorch3DRenderer(Renderer):
                     blend_type=self.args.blend_type, blend_params=blend_params
                 )
                 shaders.append(shader)
-                output_mapping[
-                    output_name
-                ] = MultioutputMeshRenderer.ShaderChannelSelection(
-                    shader_idx=len(shaders) - 1, channel_list=None
+                output_mapping[output_name] = (
+                    MultioutputMeshRenderer.ShaderChannelSelection(
+                        shader_idx=len(shaders) - 1, channel_list=None
+                    )
                 )
 
             elif output_name == "flat_vertex_color":
@@ -703,13 +707,13 @@ class PyTorch3DRenderer(Renderer):
                 shader = FlatVertexAttributeShader(
                     attribute_name="color",
                     blend_type=self.args.blend_type,
-                    blend_params=blend_params
+                    blend_params=blend_params,
                 )
                 shaders.append(shader)
-                output_mapping[
-                    output_name
-                ] = MultioutputMeshRenderer.ShaderChannelSelection(
-                    shader_idx=len(shaders) - 1, channel_list=None
+                output_mapping[output_name] = (
+                    MultioutputMeshRenderer.ShaderChannelSelection(
+                        shader_idx=len(shaders) - 1, channel_list=None
+                    )
                 )
 
             elif output_name == "flat_global_volume_texture":
@@ -723,10 +727,10 @@ class PyTorch3DRenderer(Renderer):
                     blend_params=blend_params,
                 )
                 shaders.append(shader)
-                output_mapping[
-                    output_name
-                ] = MultioutputMeshRenderer.ShaderChannelSelection(
-                    shader_idx=len(shaders) - 1, channel_list=None
+                output_mapping[output_name] = (
+                    MultioutputMeshRenderer.ShaderChannelSelection(
+                        shader_idx=len(shaders) - 1, channel_list=None
+                    )
                 )
 
             elif output_name in ["world_position", "camera_position", "ndc_position"]:
@@ -742,10 +746,10 @@ class PyTorch3DRenderer(Renderer):
                     blend_params=blend_params,
                 )
                 shaders.append(shader)
-                output_mapping[
-                    output_name
-                ] = MultioutputMeshRenderer.ShaderChannelSelection(
-                    shader_idx=len(shaders) - 1, channel_list=None
+                output_mapping[output_name] = (
+                    MultioutputMeshRenderer.ShaderChannelSelection(
+                        shader_idx=len(shaders) - 1, channel_list=None
+                    )
                 )
 
             elif output_name in [
@@ -765,10 +769,10 @@ class PyTorch3DRenderer(Renderer):
                     blend_params=blend_params,
                 )
                 shaders.append(shader)
-                output_mapping[
-                    output_name
-                ] = MultioutputMeshRenderer.ShaderChannelSelection(
-                    shader_idx=len(shaders) - 1, channel_list=None
+                output_mapping[output_name] = (
+                    MultioutputMeshRenderer.ShaderChannelSelection(
+                        shader_idx=len(shaders) - 1, channel_list=None
+                    )
                 )
 
             elif output_name == "depth":
@@ -782,10 +786,10 @@ class PyTorch3DRenderer(Renderer):
                     blend_params=blend_params,
                 )
                 shaders.append(shader)
-                output_mapping[
-                    output_name
-                ] = MultioutputMeshRenderer.ShaderChannelSelection(
-                    shader_idx=len(shaders) - 1, channel_list=None
+                output_mapping[output_name] = (
+                    MultioutputMeshRenderer.ShaderChannelSelection(
+                        shader_idx=len(shaders) - 1, channel_list=None
+                    )
                 )
 
         # create renderer
@@ -856,22 +860,46 @@ class PyTorch3DRenderer(Renderer):
             )
 
             num_verts = [mesh.verts.shape[0] for mesh in self._scene["meshes"]]
-            
+
             # get packed vertex attributes (use zeros for meshes where a given attribute is missing)
-            vert_attribute_names = sorted(list(set(itertools.chain(*(mesh.vert_attributes.keys() for mesh in self._scene["meshes"])))))
+            vert_attribute_names = sorted(
+                list(
+                    set(
+                        itertools.chain(
+                            *(
+                                mesh.vert_attributes.keys()
+                                for mesh in self._scene["meshes"]
+                            )
+                        )
+                    )
+                )
+            )
             for name in vert_attribute_names:
 
-                attr_dims = set((mesh.vert_attributes[name].values.shape[-1] if name in mesh.vert_attributes else None) for mesh in self._scene["meshes"])
+                attr_dims = set(
+                    (
+                        mesh.vert_attributes[name].values.shape[-1]
+                        if name in mesh.vert_attributes
+                        else None
+                    )
+                    for mesh in self._scene["meshes"]
+                )
                 attr_dims = attr_dims - {None}
                 if len(attr_dims) != 1:
-                    raise RuntimeError(f"Vertex attribute {name} has different dimensions across meshes.")
+                    raise RuntimeError(
+                        f"Vertex attribute {name} has different dimensions across meshes."
+                    )
                 attr_dim = next(iter(attr_dims))
 
                 start_idx = 0
-                vert_attributes[name] = torch.zeros(sum(num_verts), attr_dim, device=self.device, dtype=torch.float32)
+                vert_attributes[name] = torch.zeros(
+                    sum(num_verts), attr_dim, device=self.device, dtype=torch.float32
+                )
                 for mesh_idx, mesh in enumerate(self._scene["meshes"]):
                     if name in mesh.vert_attributes:
-                        vert_attributes[name][start_idx:start_idx + num_verts[mesh_idx]] = mesh.vert_attributes[name].values
+                        vert_attributes[name][
+                            start_idx : start_idx + num_verts[mesh_idx]
+                        ] = mesh.vert_attributes[name].values
                     start_idx += num_verts[mesh_idx]
 
         # create PyTorch3D uv textures from scene uv textures
@@ -885,16 +913,30 @@ class PyTorch3DRenderer(Renderer):
             # if not isinstance(cameras, ) # TODO: check cameras has the right class
             # (Valentin changed the camer class so leaving this for later when the new camera class is merged)
             # f = 0.5 * w / np.tan(0.5 * 55 * np.pi / 180.0)
-            
 
             if isinstance(self.args.output_res, (list, tuple)):
                 # potentially non-square output resolution given by (h, w) output_res
                 # PyTorch3D expects the field of view in degrees of the vertical side length of the image,
                 # whereas the intrinsics contain the fov of the maximum side length.
-                fov = 2 * torch.rad2deg(torch.atan(1 / torch.stack([camera.intrinsics[1, 1] * (self.args.output_res[0] / max(self.args.output_res)) for camera in cameras])))
+                fov = 2 * torch.rad2deg(
+                    torch.atan(
+                        1
+                        / torch.stack(
+                            [
+                                camera.intrinsics[1, 1]
+                                * (self.args.output_res[0] / max(self.args.output_res))
+                                for camera in cameras
+                            ]
+                        )
+                    )
+                )
             else:
                 # square output resolution
-                fov = 2 * torch.rad2deg(torch.atan(1 / torch.stack([camera.intrinsics[1, 1] for camera in cameras])))
+                fov = 2 * torch.rad2deg(
+                    torch.atan(
+                        1 / torch.stack([camera.intrinsics[1, 1] for camera in cameras])
+                    )
+                )
 
             # fov = 2 * torch.rad2deg(torch.atan(1 / (cameras[0].intrinsics[1, 1] / (0.5*512))))
             # cameras_pos is a tensor of shape [3, nbcamera] where the first dimension describes [distance to center, elevation, azimuth]
@@ -935,7 +977,7 @@ class PyTorch3DRenderer(Renderer):
             meshes_world=meshes_extended,
             global_volume_texture=global_volume_texture,
             vert_attributes=vert_attributes,
-            cameras=cameras, # cameras_extended,
+            cameras=cameras,  # cameras_extended,
         )
 
         return outputs

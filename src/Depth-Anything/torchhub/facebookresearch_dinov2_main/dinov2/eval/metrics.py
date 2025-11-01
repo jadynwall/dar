@@ -41,7 +41,9 @@ class AccuracyAveraging(Enum):
         return self.value
 
 
-def build_metric(metric_type: MetricType, *, num_classes: int, ks: Optional[tuple] = None):
+def build_metric(
+    metric_type: MetricType, *, num_classes: int, ks: Optional[tuple] = None
+):
     if metric_type.accuracy_averaging is not None:
         return build_topk_accuracy_metric(
             average_type=metric_type.accuracy_averaging,
@@ -57,15 +59,23 @@ def build_metric(metric_type: MetricType, *, num_classes: int, ks: Optional[tupl
     raise ValueError(f"Unknown metric type {metric_type}")
 
 
-def build_topk_accuracy_metric(average_type: AccuracyAveraging, num_classes: int, ks: tuple = (1, 5)):
+def build_topk_accuracy_metric(
+    average_type: AccuracyAveraging, num_classes: int, ks: tuple = (1, 5)
+):
     metrics: Dict[str, Metric] = {
-        f"top-{k}": MulticlassAccuracy(top_k=k, num_classes=int(num_classes), average=average_type.value) for k in ks
+        f"top-{k}": MulticlassAccuracy(
+            top_k=k, num_classes=int(num_classes), average=average_type.value
+        )
+        for k in ks
     }
     return MetricCollection(metrics)
 
 
 def build_topk_imagenet_real_accuracy_metric(num_classes: int, ks: tuple = (1, 5)):
-    metrics: Dict[str, Metric] = {f"top-{k}": ImageNetReaLAccuracy(top_k=k, num_classes=int(num_classes)) for k in ks}
+    metrics: Dict[str, Metric] = {
+        f"top-{k}": ImageNetReaLAccuracy(top_k=k, num_classes=int(num_classes))
+        for k in ks
+    }
     return MetricCollection(metrics)
 
 
@@ -92,7 +102,11 @@ class ImageNetReaLAccuracy(Metric):
         # select top K highest probabilities, use one hot representation
         preds_oh = select_topk(preds, self.top_k)
         # target_oh [B, D + 1] with 0 and 1
-        target_oh = torch.zeros((preds_oh.shape[0], preds_oh.shape[1] + 1), device=target.device, dtype=torch.int32)
+        target_oh = torch.zeros(
+            (preds_oh.shape[0], preds_oh.shape[1] + 1),
+            device=target.device,
+            dtype=torch.int32,
+        )
         target = target.long()
         # for undefined targets (-1) use a fake value `num_classes`
         target[target == -1] = self.num_classes

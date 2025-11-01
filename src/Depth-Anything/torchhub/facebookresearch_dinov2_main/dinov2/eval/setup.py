@@ -51,7 +51,9 @@ def get_args_parser(
 
 
 def get_autocast_dtype(config):
-    teacher_dtype_str = config.compute_precision.teacher.backbone.mixed_precision.param_dtype
+    teacher_dtype_str = (
+        config.compute_precision.teacher.backbone.mixed_precision.param_dtype
+    )
     if teacher_dtype_str == "fp16":
         return torch.half
     elif teacher_dtype_str == "bf16":

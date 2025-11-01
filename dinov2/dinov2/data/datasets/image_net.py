@@ -34,7 +34,9 @@ class _Split(Enum):
     def get_dirname(self, class_id: Optional[str] = None) -> str:
         return self.value if class_id is None else os.path.join(self.value, class_id)
 
-    def get_image_relpath(self, actual_index: int, class_id: Optional[str] = None) -> str:
+    def get_image_relpath(
+        self, actual_index: int, class_id: Optional[str] = None
+    ) -> str:
         dirname = self.get_dirname(class_id)
         if self == _Split.TRAIN:
             basename = f"{class_id}_{actual_index}"
@@ -100,13 +102,19 @@ class ImageNet(ExtendedVisionDataset):
         os.makedirs(extra_root, exist_ok=True)
         np.save(extra_full_path, extra_array)
 
-    def _get_entries_path(self, split: "ImageNet.Split", root: Optional[str] = None) -> str:
+    def _get_entries_path(
+        self, split: "ImageNet.Split", root: Optional[str] = None
+    ) -> str:
         return f"entries-{split.value.upper()}.npy"
 
-    def _get_class_ids_path(self, split: "ImageNet.Split", root: Optional[str] = None) -> str:
+    def _get_class_ids_path(
+        self, split: "ImageNet.Split", root: Optional[str] = None
+    ) -> str:
         return f"class-ids-{split.value.upper()}.npy"
 
-    def _get_class_names_path(self, split: "ImageNet.Split", root: Optional[str] = None) -> str:
+    def _get_class_names_path(
+        self, split: "ImageNet.Split", root: Optional[str] = None
+    ) -> str:
         return f"class-names-{split.value.upper()}.npy"
 
     def find_class_id(self, class_index: int) -> str:
@@ -160,7 +168,9 @@ class ImageNet(ExtendedVisionDataset):
 
         return labels
 
-    def _dump_entries(self, split: "ImageNet.Split", root: Optional[str] = None) -> None:
+    def _dump_entries(
+        self, split: "ImageNet.Split", root: Optional[str] = None
+    ) -> None:
         # NOTE: Using torchvision ImageFolder for consistency
         from torchvision.datasets import ImageFolder
 
@@ -209,7 +219,9 @@ class ImageNet(ExtendedVisionDataset):
         entries_path = self._get_entries_path(split, root)
         self._save_extra(entries_array, entries_path)
 
-    def _dump_class_ids_and_names(self, split: "ImageNet.Split", root: Optional[str] = None) -> None:
+    def _dump_class_ids_and_names(
+        self, split: "ImageNet.Split", root: Optional[str] = None
+    ) -> None:
         if split == ImageNet.Split.TEST:
             return
 

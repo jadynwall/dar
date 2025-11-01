@@ -210,7 +210,7 @@ class Mesh(torch.nn.Module):
         bc_center = 0.5 * (bc_min + bc_max)
         bc_size = (bc_max - bc_min).max()
         self.verts -= bc_center
-        self.verts *= (size / bc_size) 
+        self.verts *= size / bc_size
 
     def bounding_cube(self):
         """

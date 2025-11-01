@@ -2,8 +2,9 @@ from typing import List
 
 import torch
 
+
 class GuidedDiffuser:
-    
+
     def __init__(self, conf):
         self.conf = conf
 
@@ -22,14 +23,26 @@ class GuidedDiffuser:
 
     def decode_latent_image(self, latent_image: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
-    
+
     @torch.no_grad()
-    def initial_inference(self, init_latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str):
+    def initial_inference(
+        self,
+        init_latents: torch.Tensor,
+        depth: torch.Tensor,
+        uncond_embeddings: torch.Tensor,
+        prompt: str,
+    ):
         raise NotImplementedError
 
     @torch.no_grad()
     def guided_inference(
-            self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str,
-            activations_orig: List[torch.Tensor],
-            correspondences: torch.Tensor, save_denoising_steps: bool = False):
+        self,
+        latents: torch.Tensor,
+        depth: torch.Tensor,
+        uncond_embeddings: torch.Tensor,
+        prompt: str,
+        activations_orig: List[torch.Tensor],
+        correspondences: torch.Tensor,
+        save_denoising_steps: bool = False,
+    ):
         raise NotImplementedError
