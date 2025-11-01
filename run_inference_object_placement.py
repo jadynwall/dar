@@ -35,7 +35,7 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def load_models():
     diff_handles = FeatureGuidance(conf=None)
-    diff_handles.to(device)
+    diff_handles.to(torch.device("cpu"))
 
     save_memory = False
     disable_verbosity()
@@ -47,8 +47,7 @@ def load_models():
     model_config = config.config_file
 
     model = create_model(model_config).cpu()
-    model.load_state_dict(load_state_dict(model_ckpt, location="cuda"))
-    model = model.cuda()
+    model.load_state_dict(load_state_dict(model_ckpt, location="cpu"))
     ddim_sampler = DDIMSampler(model)
 
     return diff_handles, model, ddim_sampler, save_memory
@@ -503,7 +502,7 @@ if __name__ == "__main__":
     null_text_emb_path = "./examples/Gradio/null_embed"
     os.makedirs(null_text_emb_path, exist_ok=True)
     if not os.path.exists(save_dir):
-        os.mkdir(save_dir)
+        os.makedirs(save_dir, exist_ok=True)
 
     test_dir = DConf.Test.VitonHDTest.image_dir
     test_bg_dir = os.path.join(test_dir, "new_samples_1")
@@ -674,6 +673,10 @@ if __name__ == "__main__":
             / 255.0
         )
         depth_fore = torch.tensor(np.array(depth)).unsqueeze(0).unsqueeze(0).to("cuda")
+        if torch.cuda.is_available():
+            model.to("cpu")
+            torch.cuda.empty_cache()
+        diff_handles.to("cuda")  # bring feature guidance stack to GPU only when needed
 
         if (
             os.path.exists(
@@ -740,6 +743,12 @@ if __name__ == "__main__":
             "fg_object_latents": fg_object_latents,
             "activation_fore": activations_fore,
         }
+        # offload feature guidance weights before AnyDoor sampling
+        diff_handles.to("cpu")
+        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            model.to("cuda")
+            ddim_sampler.model = model
 
         gen_path = os.path.join(current_save_sir, image_name.split(".")[0] + "_mpi.png")
         gen_single = os.path.join(
