@@ -3,15 +3,19 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
+import numpy.typing as npt
 
 
-def get_mpi_rgb_and_alpha(input_img, depth_img, depth_partition):
+def get_mpi_rgb_and_alpha(
+    input_img: npt.NDArray[np.uint8],
+    depth_img: npt.NDArray[np.uint8],
+    depth_partition: list[tuple[int, int]],
+) -> tuple[list[npt.NDArray[np.uint8]], list[npt.NDArray[np.float64]]]:
 
-    mpi_rgb = []
-    mpi_alpha = []
+    mpi_rgb: list[npt.NDArray[np.uint8]] = []
+    mpi_alpha: list[npt.NDArray[np.float64]] = []
     for i in range(len(depth_partition)):
         mask = cv2.inRange(depth_img, depth_partition[i][0], depth_partition[i][1])
-        # mask = cv2.bitwise_not(mask)
         mpi_rgb.append(cv2.bitwise_and(input_img, input_img, mask=mask))
         mask = mask / 255
         mpi_alpha.append(mask)

@@ -1,9 +1,10 @@
 import os
 import numpy as np
 import cv2
-from transformers import pipeline, SamModel, SamProcessor
+from transformers import pipeline
 import torch
-from PIL import Image
+from PIL import Image as PILImageModule
+from PIL.Image import Image
 import sys
 
 sys.path.append(".")
@@ -48,7 +49,7 @@ def get_null_text_latents(
     return null_text_latents
 
 
-def get_depth_and_sam_mask(image, is_relative_depth=True):
+def get_depth_and_sam_mask(image: Image, is_relative_depth=True) -> tuple[Image, Image]:
     if is_relative_depth:
         depth = depth_pipe(image)["depth"]
     else:
@@ -60,7 +61,7 @@ def get_depth_and_sam_mask(image, is_relative_depth=True):
     for i, mask in enumerate(masks):
         final_mask += mask * (i + 1)
     final_mask = final_mask.cpu().numpy()
-    final_mask = Image.fromarray((final_mask).astype(np.uint8))
+    final_mask = PILImageModule.fromarray((final_mask).astype(np.uint8))
     return depth, final_mask
 
 
