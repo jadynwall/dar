@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import cv2
+import einops
 import numpy as np
 from datasets.csc2529 import AlignmentResult, CSC2529Dataset, align_images
 from torch.utils.data import DataLoader
@@ -20,6 +21,9 @@ from src.featglac import FeatureGuidance
 import numpy.typing as npt
 from diffusers.image_processor import VaeImageProcessor
 import attrs
+from typing import Any
+
+import pickle
 
 # Results are stored in a timestamped folder:
 RESULTS_DIR_TMPL = "results/new_object_placement/{}"
@@ -28,14 +32,12 @@ RESULTS_DIR_TMPL = "results/new_object_placement/{}"
 def load_anydoor() -> torch.nn.Module:
     config = OmegaConf.load("./configs/inference.yaml")
     model = create_model(config.config_file)
-    model = model.to(torch.device("cpu"))
-    model.load_state_dict(load_state_dict(config.pretrained_model, location="cpu"))
+    model.load_state_dict(load_state_dict(config.pretrained_model))
     return model
 
 
 def load_diffusion_handles() -> FeatureGuidance:
     diff_handles = FeatureGuidance()
-    diff_handles.to(torch.device("cpu"))
     return diff_handles
 
 
@@ -44,7 +46,6 @@ def build_mpi_masks(
     depth_image: PILImageModule.Image,
     target_depth: int,
     device: torch.device,
-    debug: bool = False,
     debug_dir: Path | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, list[npt.NDArray[np.uint8]]]:
     """Generate background/foreground MPI masks along with the high-res originals."""
@@ -57,7 +58,7 @@ def build_mpi_masks(
         np.array(background_crop), np.array(depth_image), depth_partition
     )
 
-    if debug and debug_dir is not None:
+    if debug_dir is not None:
         bg_np = np.array(background_crop)
         cv2.imwrite(
             str(debug_dir / "mpi_foreground_alpha.png"),
@@ -123,21 +124,15 @@ def crop_back(pred, tar_image, extra_sizes, tar_box_yyxx_crop):
 
 
 def inference_single_image(
-    ref_image,
-    ref_mask,
-    tar_image,
-    tar_mask,
-    mpi_data_dict,
+    mpi_data_dict: dict[str, Any],
     alignment_result: AlignmentResult,
-    guidance_scale=5.0,
-    curr_save_dir=None,
-    save_memory=False,
-    ddim_sampler=None,
-    model=None,
-):
-
+    background_image: npt.NDArray[np.uint8],
+    anydoor: torch.nn.Module,
+    ddim_sampler: DDIMSampler,
+    guidance_scale: float = 5.0,
+    save_memory: bool = True,
+) -> npt.NDArray[np.float64]:
     object_crop = alignment_result.object
-    background_crop = alignment_result.background
     collage = alignment_result.collage
 
     ref = object_crop * 255
@@ -148,7 +143,7 @@ def inference_single_image(
     ref = cv2.resize(ref.astype(np.uint8), (512, 512))
 
     if save_memory:
-        model.low_vram_shift(is_diffusing=False)
+        anydoor.low_vram_shift(is_diffusing=False)
 
     ref = object_crop
     hint = collage
@@ -167,40 +162,33 @@ def inference_single_image(
 
     cond = {
         "c_concat": [control],
-        "c_crossattn": [model.get_learned_conditioning(clip_input)],
+        "c_crossattn": [anydoor.get_learned_conditioning(clip_input)],
     }
     un_cond = {
         "c_concat": None if guess_mode else [control],
         "c_crossattn": [
-            model.get_learned_conditioning(
+            anydoor.get_learned_conditioning(
                 [torch.zeros((1, 3, 224, 224))] * num_samples
             )
         ],
     }
     shape = (4, H // 8, W // 8)
 
-    # amodal conditioning
-
     if save_memory:
-        model.low_vram_shift(is_diffusing=True)
+        anydoor.low_vram_shift(is_diffusing=True)
 
-    # ====
-    num_samples = 1  # gr.Slider(label="Images", minimum=1, maximum=12, value=1, step=1)
-    image_resolution = 512  # gr.Slider(label="Image Resolution", minimum=256, maximum=768, value=512, step=64)
-    strength = 1  # gr.Slider(label="Control Strength", minimum=0.0, maximum=2.0, value=1.0, step=0.01)
-    guess_mode = False  # gr.Checkbox(label='Guess Mode', value=False)
-    # detect_resolution = 512  #gr.Slider(label="Segmentation Resolution", minimum=128, maximum=1024, value=512, step=1)
-    ddim_steps = (
-        50  # gr.Slider(label="Steps", minimum=1, maximum=100, value=20, step=1)
-    )
-    scale = guidance_scale  # gr.Slider(label="Guidance Scale", minimum=0.1, maximum=30.0, value=9.0, step=0.1)
-    eta = 0.0  # gr.Number(label="eta (DDIM)", value=0.0)
+    num_samples = 1
+    strength = 1
+    guess_mode = False
+    ddim_steps = 50
+    scale = guidance_scale
+    eta = 0.0
 
-    model.control_scales = (
+    anydoor.control_scales = (
         [strength * (0.825 ** float(12 - i)) for i in range(13)]
         if guess_mode
         else ([strength] * 13)
-    )  # Magic number. IDK why. Perhaps because 0.825**12<0.01 but 0.826**12>0.01
+    )
     samples, intermediates = ddim_sampler.sample(
         ddim_steps,
         num_samples,
@@ -217,9 +205,9 @@ def inference_single_image(
     mpi_data_dict["object_latents"] = intermediates["x_inter"]
 
     if save_memory:
-        model.low_vram_shift(is_diffusing=False)
+        anydoor.low_vram_shift(is_diffusing=False)
 
-    x_samples = model.decode_first_stage(samples)
+    x_samples = anydoor.decode_first_stage(samples)
     x_samples = (
         (einops.rearrange(x_samples, "b c h w -> b h w c") * 127.5 + 127.5)
         .cpu()
@@ -229,15 +217,14 @@ def inference_single_image(
     pred = x_samples[0]
     pred = np.clip(pred, 0, 255)[:, :, :]
 
-    tag = "w_mpi" if mpi_data_dict["do_mpi"] else "wo_mpi"
     orig_pred = pred.copy()
 
-    ## saving ours anydoor results
     pred_anydoor = orig_pred[1:, :, :]
-
     sizes = alignment_result.extra_sizes
     tar_box_yyxx_crop = alignment_result.target_box_yyxx_crop
-    gen_image_anydoor = crop_back(pred_anydoor, tar_image, sizes, tar_box_yyxx_crop)
+    gen_image_anydoor = crop_back(
+        pred_anydoor, background_image.copy(), sizes, tar_box_yyxx_crop
+    )
 
     return gen_image_anydoor
 
@@ -314,10 +301,11 @@ if __name__ == "__main__":
     debug_dir, alignment_debug_dir = None, None
     if args.debug:
         debug_dir = results_dir / "debug"
-        cache_dir = debug_dir / "cache"
         alignment_debug_dir = debug_dir / "alignment"
-        os.makedirs(cache_dir)
         os.makedirs(alignment_debug_dir)
+
+    cache_dir = RESULTS_DIR_TMPL.format("cache")
+    os.makedirs(cache_dir, exist_ok=True)
 
     seed_everything(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -326,16 +314,13 @@ if __name__ == "__main__":
     dataset: CSC2529Dataset = CSC2529Dataset(Path(args.dataset_base_dir))
     loader = DataLoader(dataset, collate_fn=lambda x: x[0])
 
+    # Load Models
     diff_handles = load_diffusion_handles()
-
     anydoor = load_anydoor()
-    if torch.cuda.is_available():
-        anydoor.to("cuda")
-
     ddim_sampler = DDIMSampler(anydoor)
-    ddim_sampler.model = anydoor
 
     for (
+        dataset_idx,
         background_image,
         object_image,
         object_mask,
@@ -367,7 +352,7 @@ if __name__ == "__main__":
             PILImageModule.fromarray(bg_image_cropped), is_relative_depth=True
         )
         if args.debug:
-            depth.save(f"{results_dir}/debug/depth.png")
+            depth.save(f"{debug_dir}/depth.png")
 
         (
             mpi_background_alpha,
@@ -378,12 +363,26 @@ if __name__ == "__main__":
             depth_image=depth,
             target_depth=target_depth,
             device=device,
-            debug=args.debug,
             debug_dir=debug_dir,
         )
 
+        # Move Diffusion Handles to GPU for null-text inversion
         diff_handles.to(device)
-        nti_result = null_text_invert(bg_image_cropped, np.array(depth), diff_handles)
+        try:
+            with open(
+                f"{cache_dir}/null_text_{dataset_idx}.pickle", "rb"
+            ) as nti_pickle_file:
+                nti_result = pickle.load(nti_pickle_file)
+                print("Loaded null-text inversion from cache")
+        except FileNotFoundError:
+            nti_result = null_text_invert(
+                bg_image_cropped, np.array(depth), diff_handles
+            )
+            with open(
+                f"{cache_dir}/null_text_{dataset_idx}.pickle", "wb"
+            ) as nti_pickle_file:
+                pickle.dump(nti_result, nti_pickle_file)
+                print("Saved null-text inversion to cache")
 
         # Reconstruct image to debug if inversion is correct
         if args.debug:
@@ -403,7 +402,16 @@ if __name__ == "__main__":
                     cv2.cvtColor(latent_image, cv2.COLOR_RGB2BGR),
                 )
 
-        mpi_data_dict = {
+        if torch.cuda.is_available():
+            # Unload Diffusion Handles from GPU
+            diff_handles.to("cpu")
+            torch.cuda.empty_cache()
+
+            # Move AnyDoor to GPU for inpainting
+            anydoor.to(device)
+            ddim_sampler.model = anydoor
+
+        mpi_data_dict: dict[str, Any] = {
             "ddim_latents": nti_result.ddim_latents,
             "mpi_masks": [mpi_background_alpha, mpi_foreground_alpha],
             "do_mpi": True,
@@ -412,22 +420,20 @@ if __name__ == "__main__":
             "activation_fore": nti_result.activations,
         }
 
-        # offload feature guidance weights before AnyDoor sampling
-        diff_handles.to("cpu")
+        gen_image = inference_single_image(
+            mpi_data_dict=mpi_data_dict,
+            alignment_result=alignment_result,
+            background_image=background_image.copy(),
+            anydoor=anydoor,
+            ddim_sampler=ddim_sampler,
+            guidance_scale=5.0,
+            save_memory=True,
+        )
+
+        # Unload AnyDoor from GPU before next iteration
+        anydoor.to("cpu")
+        ddim_sampler.model = anydoor
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        gen_image = inference_single_image(
-            ref_image=object_image,
-            ref_mask=target_mask,
-            tar_image=alignment_result.object.copy(),
-            tar_mask=alignment_result.target_mpi_mask,
-            mpi_data_dict=mpi_data_dict,
-            alignment_result=alignment_result,
-            guidance_scale=5.0,
-            curr_save_dir=results_dir,
-            save_memory=True,
-            ddim_sampler=ddim_sampler,
-            model=anydoor,
-        )
         cv2.imwrite(str(results_dir / "result.png"), gen_image[:, :, ::-1])

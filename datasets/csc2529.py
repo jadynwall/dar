@@ -39,7 +39,7 @@ class CSC2529Dataset(Dataset[tuple[NPImage, NPImage, NPImage, NPImage]]):
     def __len__(self) -> int:
         return self.num_backgrounds
 
-    def __getitem__(self, idx: int) -> tuple[NPImage, NPImage, NPImage, NPImage]:
+    def __getitem__(self, idx: int) -> tuple[int, NPImage, NPImage, NPImage, NPImage]:
         background_image = cv2.imread(f"{self.background_image_dir}/{idx}.png")
         background_image = cv2.cvtColor(background_image, cv2.COLOR_BGR2RGB)
 
@@ -59,7 +59,14 @@ class CSC2529Dataset(Dataset[tuple[NPImage, NPImage, NPImage, NPImage]]):
 
         target_depth = self.idx_to_depth[idx]
 
-        return background_image, object_image, object_mask, target_mask, target_depth
+        return (
+            idx,
+            background_image,
+            object_image,
+            object_mask,
+            target_mask,
+            target_depth,
+        )
 
 
 @attrs.define
