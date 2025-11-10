@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 import cv2
 import numpy as np
-from datasets.csc2529 import CSC2529Dataset, align_images
+from datasets.csc2529 import AlignmentResult, CSC2529Dataset, align_images
 from torch.utils.data import DataLoader
 from datetime import datetime
 from pytorch_lightning import seed_everything
@@ -39,38 +39,119 @@ def load_diffusion_handles() -> FeatureGuidance:
     return diff_handles
 
 
+def build_mpi_masks(
+    background_crop: npt.NDArray[np.uint8],
+    depth_image: PILImageModule.Image,
+    target_depth: int,
+    device: torch.device,
+    debug: bool = False,
+    debug_dir: Path | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, list[npt.NDArray[np.uint8]]]:
+    """Generate background/foreground MPI masks along with the high-res originals."""
+
+    depth_partition: list[tuple[int, int]] = [
+        (0, target_depth),
+        (target_depth, 300),
+    ]
+    _, layered_alpha = get_mpi_rgb_and_alpha(
+        np.array(background_crop), np.array(depth_image), depth_partition
+    )
+
+    if debug and debug_dir is not None:
+        bg_np = np.array(background_crop)
+        cv2.imwrite(
+            str(debug_dir / "mpi_foreground_alpha.png"),
+            bg_np * layered_alpha[1][:, :, None],
+        )
+        cv2.imwrite(
+            str(debug_dir / "mpi_background_alpha.png"),
+            bg_np * layered_alpha[0][:, :, None],
+        )
+
+    background_alpha = layered_alpha[0]
+    foreground_alpha = layered_alpha[1]
+    background_alpha = 1 - foreground_alpha
+
+    # Preserve the pre-resize masks for downstream compositing.
+    mpi_orig_mask = [background_alpha.copy(), foreground_alpha.copy()]
+
+    foreground_alpha = cv2.resize(
+        foreground_alpha, (64, 64), interpolation=cv2.INTER_NEAREST
+    )
+    background_alpha = cv2.resize(
+        background_alpha, (64, 64), interpolation=cv2.INTER_NEAREST
+    )
+
+    foreground_alpha_tensor = (
+        torch.tensor(foreground_alpha, dtype=torch.float16)
+        .to(device)
+        .unsqueeze(0)
+        .unsqueeze(0)
+    )
+    background_alpha_tensor = (
+        torch.tensor(background_alpha, dtype=torch.float16)
+        .to(device)
+        .unsqueeze(0)
+        .unsqueeze(0)
+    )
+
+    return background_alpha_tensor, foreground_alpha_tensor, mpi_orig_mask
+
+
+def crop_back(pred, tar_image, extra_sizes, tar_box_yyxx_crop):
+    H1, W1, H2, W2 = extra_sizes
+    y1, y2, x1, x2 = tar_box_yyxx_crop
+    pred = cv2.resize(pred, (W2, H2))
+    m = 10  # maigin_pixel 5
+
+    if W1 == H1:
+        tar_image[y1 + m : y2 - m, x1 + m : x2 - m, :] = pred[m:-m, m:-m]
+        return tar_image
+
+    if W1 < W2:
+        pad1 = int((W2 - W1) / 2)
+        pad2 = W2 - W1 - pad1
+        pred = pred[:, pad1:-pad2, :]
+    else:
+        pad1 = int((H2 - H1) / 2)
+        pad2 = H2 - H1 - pad1
+        pred = pred[pad1:-pad2, :, :]
+
+    gen_image = tar_image.copy()
+    gen_image[y1 + m : y2 - m, x1 + m : x2 - m, :] = pred[m:-m, m:-m]
+    return gen_image
+
+
 def inference_single_image(
     ref_image,
     ref_mask,
     tar_image,
     tar_mask,
     mpi_data_dict,
-    item=None,
+    alignment_result: AlignmentResult,
     guidance_scale=5.0,
     curr_save_dir=None,
     save_memory=False,
     ddim_sampler=None,
     model=None,
 ):
-    if item is None:
-        item = process_pairs(ref_image, ref_mask, tar_image, tar_mask)
-    ref = item["ref"] * 255
-    tar = item["jpg"] * 127.5 + 127.5
-    hint = item["hint"] * 127.5 + 127.5
 
-    # cv2.imwrite("ref_image.png", ref[:, :, ::-1])
-    hint_image = hint[:, :, :-1]
-    hint_mask = item["hint"][:, :, -1] * 255
+    object_crop = alignment_result.object
+    background_crop = alignment_result.background
+    collage = alignment_result.collage
+
+    ref = object_crop * 255
+    hint = collage * 127.5 + 127.5
+
+    hint_mask = collage[:, :, -1] * 255
     hint_mask = np.stack([hint_mask, hint_mask, hint_mask], -1)
     ref = cv2.resize(ref.astype(np.uint8), (512, 512))
 
-    seed = random.randint(0, 65535)
     if save_memory:
         model.low_vram_shift(is_diffusing=False)
 
-    ref = item["ref"]
-    tar = item["jpg"]
-    hint = item["hint"]
+    ref = object_crop
+    hint = collage
     num_samples = 1
 
     control = torch.from_numpy(hint.copy()).float().cuda()
@@ -113,9 +194,6 @@ def inference_single_image(
         50  # gr.Slider(label="Steps", minimum=1, maximum=100, value=20, step=1)
     )
     scale = guidance_scale  # gr.Slider(label="Guidance Scale", minimum=0.1, maximum=30.0, value=9.0, step=0.1)
-    seed = (
-        -1
-    )  # gr.Slider(label="Seed", minimum=-1, maximum=2147483647, step=1, randomize=True)
     eta = 0.0  # gr.Number(label="eta (DDIM)", value=0.0)
 
     model.control_scales = (
@@ -146,27 +224,20 @@ def inference_single_image(
         (einops.rearrange(x_samples, "b c h w -> b h w c") * 127.5 + 127.5)
         .cpu()
         .numpy()
-    )  # .clip(0, 255).astype(np.uint8)
-
-    # result = x_samples[0][:,:,::-1]
-    # result = np.clip(result,0,255)
+    )
 
     pred = x_samples[0]
     pred = np.clip(pred, 0, 255)[:, :, :]
 
     tag = "w_mpi" if mpi_data_dict["do_mpi"] else "wo_mpi"
-    # cv2.imwrite(
-    #     os.path.join(curr_save_dir, f"anydoor_orig_gen_{tag}.png"), pred[:, :, ::-1]
-    # )
     orig_pred = pred.copy()
 
     ## saving ours anydoor results
     pred_anydoor = orig_pred[1:, :, :]
 
-    sizes = item["extra_sizes"]
-    tar_box_yyxx_crop = item["tar_box_yyxx_crop"]
+    sizes = alignment_result.extra_sizes
+    tar_box_yyxx_crop = alignment_result.target_box_yyxx_crop
     gen_image_anydoor = crop_back(pred_anydoor, tar_image, sizes, tar_box_yyxx_crop)
-    # cv2.imwrite(os.path.join(curr_save_dir, f"anydoor_gen_{tag}.png"), gen_image_anydoor[:,:,::-1])
 
     return gen_image_anydoor
 
@@ -243,17 +314,17 @@ if __name__ == "__main__":
     debug_dir, alignment_debug_dir = None, None
     if args.debug:
         debug_dir = results_dir / "debug"
+        cache_dir = debug_dir / "cache"
         alignment_debug_dir = debug_dir / "alignment"
+        os.makedirs(cache_dir)
         os.makedirs(alignment_debug_dir)
 
-    dataset: CSC2529Dataset = CSC2529Dataset(Path(args.dataset_base_dir))
-
-    # collate_fin keeps types as numpy instead of torch and avoids adding a batch dim
-    loader = DataLoader(dataset, collate_fn=lambda x: x[0])
-
     seed_everything(42)
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # collate_fn keeps types as numpy instead of torch and avoids adding a batch dim
+    dataset: CSC2529Dataset = CSC2529Dataset(Path(args.dataset_base_dir))
+    loader = DataLoader(dataset, collate_fn=lambda x: x[0])
 
     diff_handles = load_diffusion_handles()
 
@@ -298,80 +369,46 @@ if __name__ == "__main__":
         if args.debug:
             depth.save(f"{results_dir}/debug/depth.png")
 
-        # Get layered depth mask
-        depth_partition: list[tuple[int, int]] = [
-            (0, target_depth),
-            (target_depth, 300),
-        ]
-        mpi_foreground_rgb, mpi_foreground_alpha = get_mpi_rgb_and_alpha(
-            np.array(bg_image_cropped), np.array(depth), depth_partition
-        )
-
-        if args.debug:
-            cv2.imwrite(
-                "{}/mpi_foreground_alpha.png".format(debug_dir),
-                np.array(bg_image_cropped) * mpi_foreground_alpha[1][:, :, None],
-            )
-            cv2.imwrite(
-                "{}/mpi_background_alpha.png".format(debug_dir),
-                np.array(bg_image_cropped) * mpi_foreground_alpha[0][:, :, None],
-            )
-
-        mpi_background_alpha, mpi_foreground_alpha = (
-            mpi_foreground_alpha[0],
-            mpi_foreground_alpha[1],
-        )
-        mpi_background_alpha = 1 - mpi_foreground_alpha
-
-        mpi_orig_mask = [mpi_background_alpha, mpi_foreground_alpha]
-        mpi_foreground_alpha = cv2.resize(
-            mpi_foreground_alpha, (64, 64), interpolation=cv2.INTER_NEAREST
-        )
-
-        mpi_background_alpha = cv2.resize(
-            mpi_background_alpha, (64, 64), interpolation=cv2.INTER_NEAREST
-        )
-        mpi_foreground_alpha = (
-            torch.tensor(mpi_foreground_alpha, dtype=torch.float16)
-            .to(device)
-            .unsqueeze(0)
-            .unsqueeze(0)
-        )
-        mpi_background_alpha = (
-            torch.tensor(mpi_background_alpha, dtype=torch.float16)
-            .to(device)
-            .unsqueeze(0)
-            .unsqueeze(0)
+        (
+            mpi_background_alpha,
+            mpi_foreground_alpha,
+            mpi_orig_mask,
+        ) = build_mpi_masks(
+            background_crop=bg_image_cropped,
+            depth_image=depth,
+            target_depth=target_depth,
+            device=device,
+            debug=args.debug,
+            debug_dir=debug_dir,
         )
 
         diff_handles.to(device)
         nti_result = null_text_invert(bg_image_cropped, np.array(depth), diff_handles)
 
-        # reconstruct image to check if inversion is correct
-        latent_image = nti_result.latent_image
-        with torch.no_grad():
-            latent_image = diff_handles.diffuser.vae.decode(
-                latent_image / diff_handles.diffuser.vae.config.scaling_factor,
-                return_dict=False,
-            )[0]
-            latent_image = VaeImageProcessor(
-                vae_scale_factor=diff_handles.diffuser.vae.config.scaling_factor
-            ).postprocess(latent_image, output_type="pt")
-            latent_image = latent_image.permute(0, 2, 3, 1).squeeze().cpu().numpy()
-            latent_image = (latent_image * 255).astype(np.uint8)
-            cv2.imwrite(
-                f"{debug_dir}/recon_fg.jpg",
-                cv2.cvtColor(latent_image, cv2.COLOR_RGB2BGR),
-            )
+        # Reconstruct image to debug if inversion is correct
+        if args.debug:
+            latent_image = nti_result.latent_image
+            with torch.no_grad():
+                latent_image = diff_handles.diffuser.vae.decode(
+                    latent_image / diff_handles.diffuser.vae.config.scaling_factor,
+                    return_dict=False,
+                )[0]
+                latent_image = VaeImageProcessor(
+                    vae_scale_factor=diff_handles.diffuser.vae.config.scaling_factor
+                ).postprocess(latent_image, output_type="pt")
+                latent_image = latent_image.permute(0, 2, 3, 1).squeeze().cpu().numpy()
+                latent_image = (latent_image * 255).astype(np.uint8)
+                cv2.imwrite(
+                    f"{debug_dir}/recon_fg.jpg",
+                    cv2.cvtColor(latent_image, cv2.COLOR_RGB2BGR),
+                )
 
-        fg_object_latents = None
-        do_mpi = True
         mpi_data_dict = {
             "ddim_latents": nti_result.ddim_latents,
             "mpi_masks": [mpi_background_alpha, mpi_foreground_alpha],
-            "do_mpi": do_mpi,
+            "do_mpi": True,
             "mpi_orig_mask": mpi_orig_mask,
-            "fg_object_latents": fg_object_latents,
+            "fg_object_latents": None,
             "activation_fore": nti_result.activations,
         }
 
@@ -386,7 +423,7 @@ if __name__ == "__main__":
             tar_image=alignment_result.object.copy(),
             tar_mask=alignment_result.target_mpi_mask,
             mpi_data_dict=mpi_data_dict,
-            aligned_items=alignment_result,
+            alignment_result=alignment_result,
             guidance_scale=5.0,
             curr_save_dir=results_dir,
             save_memory=True,
