@@ -26,7 +26,7 @@ from typing import Any
 import pickle
 
 # Results are stored in a timestamped folder:
-RESULTS_DIR_TMPL = "results/new_object_placement/{}"
+RESULTS_BASE_DIR = "results/new_object_placement/{}"
 
 
 def load_anydoor() -> torch.nn.Module:
@@ -293,18 +293,12 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
-    results_dir: Path = Path(
-        RESULTS_DIR_TMPL.format(datetime.now().strftime("%Y-%m-%d-%H-%M-%S"))
+    timestamped_results_dir: Path = Path(
+        RESULTS_BASE_DIR.format(datetime.now().strftime("%Y-%m-%d-%H-%M-%S"))
     )
     args = parse_args()
 
-    debug_dir, alignment_debug_dir = None, None
-    if args.debug:
-        debug_dir = results_dir / "debug"
-        alignment_debug_dir = debug_dir / "alignment"
-        os.makedirs(alignment_debug_dir)
-
-    cache_dir = RESULTS_DIR_TMPL.format("cache")
+    cache_dir = RESULTS_BASE_DIR.format("cache")
     os.makedirs(cache_dir, exist_ok=True)
 
     seed_everything(42)
@@ -327,12 +321,20 @@ if __name__ == "__main__":
         target_mask,
         target_depth,
     ) in loader:
+        # Create output directories
+        results_dir = timestamped_results_dir / str(dataset_idx)
+        os.makedirs(results_dir)
+
+        debug_dir = None
+        if args.debug:
+            debug_dir = results_dir / "debug"
+            os.makedirs(debug_dir)
+
         alignment_result = align_images(
             background_image, object_image, object_mask, target_mask
         )
-
-        if alignment_debug_dir:
-            alignment_result.save(alignment_debug_dir)
+        if debug_dir:
+            alignment_result.save(debug_dir)
 
         # Resize sam mask to 512 because the object_bbox_for_sam that align_images
         # returns is still expressed in the crop’s native resolution, i.e., before
@@ -348,6 +350,7 @@ if __name__ == "__main__":
             np.uint8
         )
 
+        # Calculate scene depth
         depth, sam_mask = get_depth_and_sam_mask(
             PILImageModule.fromarray(bg_image_cropped), is_relative_depth=True
         )
@@ -368,19 +371,17 @@ if __name__ == "__main__":
 
         # Move Diffusion Handles to GPU for null-text inversion
         diff_handles.to(device)
+        null_text_cache_file = f"{cache_dir}/null_text_{dataset_idx}.pickle"
         try:
-            with open(
-                f"{cache_dir}/null_text_{dataset_idx}.pickle", "rb"
-            ) as nti_pickle_file:
+            with open(null_text_cache_file, "rb") as nti_pickle_file:
                 nti_result = pickle.load(nti_pickle_file)
                 print("Loaded null-text inversion from cache")
         except FileNotFoundError:
-            nti_result = null_text_invert(
-                bg_image_cropped, np.array(depth), diff_handles
-            )
-            with open(
-                f"{cache_dir}/null_text_{dataset_idx}.pickle", "wb"
-            ) as nti_pickle_file:
+            with torch.enable_grad():
+                nti_result = null_text_invert(
+                    bg_image_cropped, np.array(depth), diff_handles
+                )
+            with open(null_text_cache_file, "wb") as nti_pickle_file:
                 pickle.dump(nti_result, nti_pickle_file)
                 print("Saved null-text inversion to cache")
 

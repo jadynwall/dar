@@ -28,7 +28,7 @@ class CSC2529Dataset(Dataset[tuple[NPImage, NPImage, NPImage, NPImage]]):
         self.background_image_dir = base_dir / "background"
         self.target_mask_dir = base_dir / "target_mask"
         self.object_dir = base_dir / "object"
-        self.num_backgrounds = len(os.listdir(self.background_image_dir))
+        self.num_backgrounds = len(list(self.background_image_dir.glob("*.png")))
 
         with open(base_dir / "depth.json") as depth_file:
             depth_json = json.load(depth_file)
