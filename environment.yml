@@ -110,9 +110,9 @@ dependencies:
       - oauthlib==3.2.2
       - omegaconf==2.1.1
       - open-clip-torch==2.17.1
-      - opencv-contrib-python==4.5.3.56
-      - opencv-python==4.7.0.72
-      - opencv-python-headless==4.7.0.72
+      - opencv-contrib-python==4.8.1.78
+      - opencv-python==4.8.1.78
+      - opencv-python-headless==4.8.1.78
       - orjson==3.9.10
       - packaging==23.2
       - pandas==2.0.3
