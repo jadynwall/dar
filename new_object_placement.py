@@ -5,7 +5,7 @@ from pathlib import Path
 import cv2
 import einops
 import numpy as np
-from datasets.csc2529 import AlignmentResult, CSC2529Dataset, align_images
+from datasets.csc2529 import AnyDoorCollage, CSC2529Dataset, create_anydoor_collage
 from torch.utils.data import DataLoader
 from datetime import datetime
 from pytorch_lightning import seed_everything
@@ -15,6 +15,7 @@ from cldm.ddim_hacked_mpi_featguidance import DDIMSampler
 from utils.mpi.mpi import get_mpi_rgb_and_alpha
 from cldm.model import create_model, load_state_dict
 from PIL import Image as PILImageModule
+from PIL.Image import Image
 import torch
 from omegaconf import OmegaConf
 from src.featglac import FeatureGuidance
@@ -22,8 +23,10 @@ import numpy.typing as npt
 from diffusers.image_processor import VaeImageProcessor
 import attrs
 from typing import Any
-
+from transformers import pipeline
 import pickle
+from utils.vis import draw_pts
+from utils.img_proc import get_object_mask, extract_masked_object, calc_target_mask
 
 # Results are stored in a timestamped folder:
 RESULTS_BASE_DIR = "results/new_object_placement/{}"
@@ -34,11 +37,6 @@ def load_anydoor() -> torch.nn.Module:
     model = create_model(config.config_file)
     model.load_state_dict(load_state_dict(config.pretrained_model))
     return model
-
-
-def load_diffusion_handles() -> FeatureGuidance:
-    diff_handles = FeatureGuidance()
-    return diff_handles
 
 
 def build_mpi_masks(
@@ -103,7 +101,7 @@ def crop_back(pred, tar_image, extra_sizes, tar_box_yyxx_crop):
     H1, W1, H2, W2 = extra_sizes
     y1, y2, x1, x2 = tar_box_yyxx_crop
     pred = cv2.resize(pred, (W2, H2))
-    m = 10  # maigin_pixel 5
+    m = 10  # margin_pixel
 
     if W1 == H1:
         tar_image[y1 + m : y2 - m, x1 + m : x2 - m, :] = pred[m:-m, m:-m]
@@ -125,7 +123,7 @@ def crop_back(pred, tar_image, extra_sizes, tar_box_yyxx_crop):
 
 def inference_single_image(
     mpi_data_dict: dict[str, Any],
-    alignment_result: AlignmentResult,
+    alignment_result: AnyDoorCollage,
     background_image: npt.NDArray[np.uint8],
     anydoor: torch.nn.Module,
     ddim_sampler: DDIMSampler,
@@ -306,37 +304,47 @@ if __name__ == "__main__":
 
     # collate_fn keeps types as numpy instead of torch and avoids adding a batch dim
     dataset: CSC2529Dataset = CSC2529Dataset(Path(args.dataset_base_dir))
-    loader = DataLoader(dataset, collate_fn=lambda x: x[0])
+    loader = DataLoader(dataset, collate_fn=lambda x: x[0])  # type: ignore
 
     # Load Models
-    diff_handles = load_diffusion_handles()
+    diff_handles = FeatureGuidance()
     anydoor = load_anydoor()
     ddim_sampler = DDIMSampler(anydoor)
+    sam_pipeline = pipeline("mask-generation", model="facebook/sam-vit-huge", device=0)
+    depth_pipeline = pipeline(
+        task="depth-estimation", model="LiheYoung/depth-anything-small-hf"
+    )
 
-    for (
-        dataset_idx,
-        background_image,
-        object_image,
-        object_mask,
-        target_mask,
-        target_depth,
-    ) in loader:
+    for dataset_idx, background_image, source_px, target_px in loader:
         # Create output directories
         results_dir = timestamped_results_dir / str(dataset_idx)
+        debug_dir = results_dir / "debug"
         os.makedirs(results_dir)
-
-        debug_dir = None
         if args.debug:
-            debug_dir = results_dir / "debug"
             os.makedirs(debug_dir)
 
-        alignment_result = align_images(
-            background_image, object_image, object_mask, target_mask
+        # Draw the source and target point on the background image.
+        if args.debug:
+            pts_preview = draw_pts(background_image.copy(), source_px, target_px)
+            PILImageModule.fromarray(pts_preview).save(debug_dir / "input_preview.png")
+
+        # Extract the SAM mask and corresponding sub-image that intersect source_px
+        object_mask = get_object_mask(background_image, source_px, sam_pipeline)
+        cropped_object_rgba = extract_masked_object(background_image, object_mask)
+
+        # Calculate target mask based on depth scaling
+        target_mask = calc_target_mask(background_image, cropped_object_rgba, target_px)
+
+        alignment_result = create_anydoor_collage(
+            bg_image=background_image,
+            object_image=cropped_object_rgba[:, :, :3],
+            object_mask=cropped_object_rgba[:, :, -1],
+            target_mask=target_mask,
         )
         if debug_dir:
             alignment_result.save(debug_dir)
 
-        # Resize sam mask to 512 because the object_bbox_for_sam that align_images
+        # Resize sam mask to 512 because the object_bbox_for_sam that create_anydoor_collage
         # returns is still expressed in the crop’s native resolution, i.e., before
         # the crop is padded and resized.
         y1, y2, x1, x2 = alignment_result.target_box_yyxx_crop
@@ -345,17 +353,27 @@ if __name__ == "__main__":
         alignment_result.object_bbox_for_sam = np.array(
             [oy1 * r, oy2 * r, ox1 * r, ox2 * r]
         )
-
         bg_image_cropped = ((alignment_result.background * 127.5) + 127.5).astype(
             np.uint8
         )
 
-        # Calculate scene depth
+        # Calculate the depth of the target point
+        full_depth_image: Image = depth_pipeline(  # type: ignore
+            PILImageModule.fromarray(background_image)
+        )["depth"]
+        target_depth = full_depth_image.getpixel((target_px[0], target_px[1]))
+
+        # Calculate the depth and sam masks of scene objects
         depth, sam_mask = get_depth_and_sam_mask(
-            PILImageModule.fromarray(bg_image_cropped), is_relative_depth=True
+            PILImageModule.fromarray(bg_image_cropped),
+            depth_pipe=depth_pipeline,
+            sam_pipe=sam_pipeline,
+            is_relative_depth=True,
         )
+
         if args.debug:
             depth.save(f"{debug_dir}/depth.png")
+            print("Target Depth:", target_depth)
 
         (
             mpi_background_alpha,

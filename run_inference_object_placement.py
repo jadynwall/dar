@@ -10,7 +10,6 @@ from cldm.ddim_hacked_mpi_featguidance import DDIMSampler
 from cldm.hack import (
     disable_verbosity,
     enable_sliced_attention,
-    disable_sliced_attention,
 )
 from datasets.data_utils import *
 
@@ -19,11 +18,7 @@ cv2.ocl.setUseOpenCL(False)
 import albumentations as A
 from omegaconf import OmegaConf
 from PIL import Image
-
-from ldm.util import instantiate_from_config
-
-
-from diffusers import DDIMScheduler
+from transformers import pipeline
 import sys
 
 sys.path.append(".")
@@ -536,6 +531,12 @@ if __name__ == "__main__":
     )
 
     video_list = []
+
+    sam_pipeline = pipeline("mask-generation", model="facebook/sam-vit-huge", device=0)
+    depth_pipeline = pipeline(
+        task="depth-estimation", model="LiheYoung/depth-anything-small-hf"
+    )
+
     for image_name in image_names:
         print(image_name)
         depth_value = relative_depth_dict.get(image_name.split(".")[0], 300)
@@ -596,7 +597,10 @@ if __name__ == "__main__":
         tar_mask_mpi = image_dict["tar_mpi_mask"]
 
         depth, sam_mask = get_depth_and_sam_mask(
-            Image.fromarray(gt_image_cropped), is_relative_depth
+            image=Image.fromarray(gt_image_cropped),
+            depth_pipe=depth_pipeline,
+            sam_pipe=sam_pipeline,
+            is_relative_depth=is_relative_depth,
         )
         # depth.save("{}/depth.png".format(current_save_sir))
 

@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import cv2
-from transformers import pipeline
+from transformers import pipeline, Pipeline
 import torch
 from PIL import Image as PILImageModule
 from PIL.Image import Image
@@ -9,12 +9,6 @@ import sys
 
 sys.path.append(".")
 from utils.mpi.get_depth import get_depth_map
-
-depth_pipe = pipeline(
-    task="depth-estimation", model="LiheYoung/depth-anything-small-hf"
-)
-
-sam_model = pipeline("mask-generation", model="facebook/sam-vit-huge", device=0)
 
 
 def get_ddim_inverted_latents(nt_pipeline, image, prompt, num_inference_steps=50):
@@ -49,13 +43,15 @@ def get_null_text_latents(
     return null_text_latents
 
 
-def get_depth_and_sam_mask(image: Image, is_relative_depth=True) -> tuple[Image, Image]:
+def get_depth_and_sam_mask(
+    image: Image, depth_pipe: Pipeline, sam_pipe: Pipeline, is_relative_depth=True
+) -> tuple[Image, Image]:
     if is_relative_depth:
         depth = depth_pipe(image)["depth"]
     else:
         actual_depth, visualise_depth = get_depth_map(image)
         depth = (actual_depth, visualise_depth)
-    outputs = sam_model(image, points_per_batch=64)
+    outputs = sam_pipe(image, points_per_batch=64)
     masks = outputs["masks"]
     final_mask = torch.zeros_like(torch.tensor(masks[0]))
     for i, mask in enumerate(masks):

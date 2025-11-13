@@ -3,7 +3,6 @@ from __future__ import annotations
 from torch.utils.data import Dataset
 from pathlib import Path
 import cv2
-import os
 import numpy as np
 import numpy.typing as npt
 from PIL import Image
@@ -17,13 +16,13 @@ from datasets.data_utils import (
     box_in_box,
 )
 import json
-
 import attrs
 
-NPImage = npt.NDArray[np.float64]
+NPImage = npt.NDArray[np.uint8]
+NPPixel = npt.NDArray[np.int32]  # x,y
 
 
-class CSC2529Dataset(Dataset[tuple[NPImage, NPImage, NPImage, NPImage]]):
+class CSC2529Dataset(Dataset[tuple[int, NPImage, NPPixel, NPPixel]]):
     def __init__(self, base_dir: Path):
         self.background_image_dir = base_dir / "background"
         self.target_mask_dir = base_dir / "target_mask"
@@ -32,55 +31,42 @@ class CSC2529Dataset(Dataset[tuple[NPImage, NPImage, NPImage, NPImage]]):
 
         with open(base_dir / "depth.json") as depth_file:
             depth_json = json.load(depth_file)
-            self.idx_to_depth: dict[int, int] = {
-                int(idx): entry["depth"] for idx, entry in depth_json.items()
+            self.idx_to_pts: dict[int, tuple[NPPixel, NPPixel]] = {
+                int(idx): CSC2529Dataset.points_to_array(entry)
+                for idx, entry in depth_json.items()
             }
+
+    @staticmethod
+    def points_to_array(json: dict[str, int]) -> tuple[NPPixel, NPPixel]:
+        """Parses json dict of source pixel and target pixel to to numpy arrays."""
+        return (
+            np.array([json["source_x"], json["source_y"]], dtype=np.int32),
+            np.array([json["target_x"], json["target_y"]], dtype=np.int32),
+        )
 
     def __len__(self) -> int:
         return self.num_backgrounds
 
-    def __getitem__(self, idx: int) -> tuple[int, NPImage, NPImage, NPImage, NPImage]:
+    def __getitem__(self, idx: int) -> tuple[int, NPImage, NPPixel, NPPixel]:
         background_image = cv2.imread(f"{self.background_image_dir}/{idx}.png")
         background_image = cv2.cvtColor(background_image, cv2.COLOR_BGR2RGB)
-
-        object_image = cv2.imread(f"{self.object_dir}/{idx}.png", cv2.IMREAD_UNCHANGED)
-        object_image = object_image[:, :, :-1]
-        object_image = cv2.cvtColor(object_image, cv2.COLOR_BGR2RGB)
-
-        object_mask = object_image[:, :, -1]
-        object_mask = (object_mask > 10).astype(np.uint8) * 255
-        object_mask = cv2.dilate(object_mask, np.ones((5, 5), np.uint8), iterations=1)
-        object_mask = (
-            cv2.erode(object_mask, np.ones((5, 5), np.uint8), iterations=1) // 255
-        )
-
-        target_mask = Image.open(f"{self.target_mask_dir}/{idx}.png").convert("L")
-        target_mask = np.array(target_mask)
-
-        target_depth = self.idx_to_depth[idx]
-
-        return (
-            idx,
-            background_image,
-            object_image,
-            object_mask,
-            target_mask,
-            target_depth,
-        )
+        source, target = self.idx_to_pts[idx]
+        return (idx, np.array(background_image), source, target)
 
 
 @attrs.define
-class AlignmentResult:
+class AnyDoorCollage:
     """
-    Contains the tensors produced by `align_images`.
+    Contains the tensors produced by `create_collage`.
+    Collage referece to the image composite referenced in the depth-ant
     """
 
     # Float32 HxWx3 RGB crop of the reference object (224x224) normalized to [0, 1].
-    object: NPImage
+    object: npt.NDArray[np.float32]
     # Float32 512x512x3 RGB crop of the target scene normalized to [-1, 1].
-    background: NPImage
+    background: npt.NDArray[np.float32]
     # Float32 512x512x4 tensor: collage RGB channels in [-1, 1] plus binary mask.
-    collage: NPImage
+    collage: npt.NDArray[np.float32]
     # UInt8 512x512x3 mask aligned with MPI preprocessing.
     target_mpi_mask: NPImage
 
@@ -117,19 +103,20 @@ class AlignmentResult:
         )
 
 
-def align_images(
+def create_anydoor_collage(
     bg_image: NPImage,
     object_image: NPImage,
     object_mask: NPImage,
     target_mask: NPImage,
     shape_control: bool = False,
-) -> AlignmentResult:
+) -> AnyDoorCollage:
     """
     Crops and aligns the reference object and target region so that the
     diffusion model can condition on them consistently.
     """
 
     # ref expand
+    object_mask = (object_mask > 0).astype(np.uint8)
     object_box_yyxx = get_bbox_from_mask(object_mask)
 
     # ref filter mask
@@ -241,7 +228,7 @@ def align_images(
     collage = collage / 127.5 - 1.0
     collage = np.concatenate([collage, collage_mask[:, :, :1]], -1)
 
-    return AlignmentResult(
+    return AnyDoorCollage(
         object=masked_obj_image_aug.copy(),
         background=cropped_bg_image.copy(),
         collage=collage.copy(),
