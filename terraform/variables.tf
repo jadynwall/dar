@@ -13,7 +13,7 @@ variable "region" {
 variable "zone" {
   description = "Zone where the compute instance will run."
   type        = string
-  default     = "us-east4-c"
+  default     = "northamerica-northeast2-a"
 }
 
 variable "machine_type" {

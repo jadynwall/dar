@@ -110,5 +110,6 @@ resource "google_compute_disk" "perma_disk" {
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [snapshot]
   }
 }
