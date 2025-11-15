@@ -25,7 +25,7 @@ import attrs
 from typing import Any
 from transformers import pipeline
 import pickle
-from utils.vis import draw_pts
+from utils.vis import draw_depth_pts
 from utils.img_proc import get_object_mask, extract_masked_object, calc_target_mask
 
 # Results are stored in a timestamped folder:
@@ -287,6 +287,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Outputs intermediated debug outputs results/",
     )
+    parser.add_argument(
+        "--skip-diffusion",
+        action="store_true",
+        help="Just generate the collage and skip generating final image",
+    )
     return parser.parse_args()
 
 
@@ -307,13 +312,14 @@ if __name__ == "__main__":
     loader = DataLoader(dataset, collate_fn=lambda x: x[0])  # type: ignore
 
     # Load Models
-    diff_handles = FeatureGuidance()
-    anydoor = load_anydoor()
-    ddim_sampler = DDIMSampler(anydoor)
     sam_pipeline = pipeline("mask-generation", model="facebook/sam-vit-huge", device=0)
     depth_pipeline = pipeline(
         task="depth-estimation", model="LiheYoung/depth-anything-small-hf"
     )
+    if not args.skip_diffusion:
+        diff_handles = FeatureGuidance()
+        anydoor = load_anydoor()
+        ddim_sampler = DDIMSampler(anydoor)
 
     for dataset_idx, background_image, source_px, target_px in loader:
         # Create output directories
@@ -323,9 +329,22 @@ if __name__ == "__main__":
         if args.debug:
             os.makedirs(debug_dir)
 
+        # Calculate the depth of the source and target points
+        full_depth_image: Image = depth_pipeline(  # type: ignore
+            PILImageModule.fromarray(background_image)
+        )["depth"]
+        source_depth = full_depth_image.getpixel(tuple(source_px))
+        target_depth = full_depth_image.getpixel(tuple(target_px))
+
         # Draw the source and target point on the background image.
         if args.debug:
-            pts_preview = draw_pts(background_image.copy(), source_px, target_px)
+            pts_preview = draw_depth_pts(
+                background_image.copy(),
+                source_px,
+                target_px,
+                source_depth=source_depth,
+                target_depth=target_depth,
+            )
             PILImageModule.fromarray(pts_preview).save(debug_dir / "input_preview.png")
 
         # Extract the SAM mask and corresponding sub-image that intersect source_px
@@ -333,7 +352,13 @@ if __name__ == "__main__":
         cropped_object_rgba = extract_masked_object(background_image, object_mask)
 
         # Calculate target mask based on depth scaling
-        target_mask = calc_target_mask(background_image, cropped_object_rgba, target_px)
+        target_mask = calc_target_mask(
+            image=background_image,
+            source_object=cropped_object_rgba,
+            target_px=target_px,
+            source_depth=source_depth,
+            target_depth=target_depth,
+        )
 
         alignment_result = create_anydoor_collage(
             bg_image=background_image,
@@ -356,12 +381,6 @@ if __name__ == "__main__":
         bg_image_cropped = ((alignment_result.background * 127.5) + 127.5).astype(
             np.uint8
         )
-
-        # Calculate the depth of the target point
-        full_depth_image: Image = depth_pipeline(  # type: ignore
-            PILImageModule.fromarray(background_image)
-        )["depth"]
-        target_depth = full_depth_image.getpixel((target_px[0], target_px[1]))
 
         # Calculate the depth and sam masks of scene objects
         depth, sam_mask = get_depth_and_sam_mask(
@@ -386,6 +405,9 @@ if __name__ == "__main__":
             device=device,
             debug_dir=debug_dir,
         )
+
+        if args.skip_diffusion:
+            continue
 
         # Move Diffusion Handles to GPU for null-text inversion
         diff_handles.to(device)

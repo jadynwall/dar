@@ -37,13 +37,20 @@ def extract_masked_object(image: npt.NDArray, mask: npt.NDArray) -> npt.NDArray:
 
 
 def calc_target_mask(
-    image: npt.NDArray, source_object: npt.NDArray, target_px: npt.NDArray
+    image: npt.NDArray,
+    source_object: npt.NDArray,
+    target_px: npt.NDArray,
+    source_depth: float,
+    target_depth: float,
 ) -> npt.NDArray:
     """Returns a mask with shape == image.shape with a box of True values of shape = source_object.shape
 
-    The True box is horizontally centered with the target_px and sits directly above it.
+    The box is horizontally centered with the target_px and sits directly above it.
+    The size of the box is scaled based on the depth.
     """
-    h, w = source_object.shape[:2]
+
+    scale_factor = source_depth / target_depth
+    h, w = (np.array(source_object.shape[:2]) * scale_factor).astype(np.uint8)
     tx, ty = target_px
     target_mask = np.zeros(image.shape[:2], dtype=np.uint8)
     b = 5  # buffer
