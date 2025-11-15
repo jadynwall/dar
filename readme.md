@@ -51,6 +51,9 @@ mkdir weights
 bash download_weights.sh
 ```
 
+## Stable Diffusion backbone
+The Stable Diffusion 2.x backbone is configurable via `guided_diffuser.base_model_path` (and `depth_model_path`) in `src/featglac/config/default.yaml`. Point these entries to either a Hugging Face repo such as `Manojb/stable-diffusion-2-1-base` or to a local folder that contains the model files (UNet, VAE, tokenizer, etc.). This makes it easy to use mirrors for models that are no longer hosted under the original URLs.
+
 ## Inference
 We provide inference code for both depth aware object placement and scene composition. You should place the images in respective folder under `examples/gradio` and modify the image path and run the following code, some sample input images are given in `examples` folder. The generated results are provided in `results/object_placement` for object placement image, and `results/scene_comp` for scene composition.
 

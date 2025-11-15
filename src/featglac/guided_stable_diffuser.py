@@ -26,10 +26,13 @@ class GuidedStableDiffuser(GuidedDiffuser):
     def __init__(self, conf):
         super().__init__(conf=conf)
 
-        if self.conf.use_depth:
-            model_name = "stabilityai/stable-diffusion-2-depth"
-        else:
-            model_name = "stabilityai/stable-diffusion-2-1-base"
+        base_model_path = getattr(
+            self.conf, "base_model_path", "stabilityai/stable-diffusion-2-1-base"
+        )
+        depth_model_path = getattr(
+            self.conf, "depth_model_path", "stabilityai/stable-diffusion-2-depth"
+        )
+        model_name = depth_model_path if self.conf.use_depth else base_model_path
 
         self.scheduler = DDIMScheduler(
             beta_start=0.00085,
