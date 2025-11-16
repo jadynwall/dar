@@ -27,6 +27,7 @@ from transformers import pipeline
 import pickle
 from utils.vis import draw_depth_pts
 from utils.img_proc import get_object_mask, extract_masked_object, calc_target_mask
+import json
 
 # Results are stored in a timestamped folder:
 RESULTS_BASE_DIR = "results/new_object_placement/{}"
@@ -275,6 +276,27 @@ def null_text_invert(
     )
 
 
+def calc_metrics() -> dict[str, float]:
+    metrics = {
+        # mean & std of depth inside mask before and after move
+        "z_mean_before": 0,
+        "z_std_before": 0,
+        "z_mean_after": 0,
+        "z_std_after": 0,
+        "z_mean_delta": 0,
+        "depth_ratio": z_mean_before / z_mean_after,
+        # pixel area of the object mask
+        "area_before": 0,
+        "area_after": 0,
+        # the multiplicative scale factor requested and observed
+        "scale_applied": 0,
+        "scale_observed": np.sqrt(area_after / area_before),
+        "scale_error": np.abs(scale_observed - depth_ratio),
+        "scale_error_rel": np.abs(scale_observed - depth_ratio) / depth_ratio,
+    }
+    return metrics
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Place an object in scene.")
     parser.add_argument(
@@ -478,3 +500,7 @@ if __name__ == "__main__":
             torch.cuda.empty_cache()
 
         cv2.imwrite(str(results_dir / "result.png"), gen_image[:, :, ::-1])
+
+        metrics = calc_metrics()
+        with open("metrics.json", "w") as file:
+            json.dump(metrics, file, indent=4)

@@ -3,7 +3,7 @@ guided_diffuser:
   fg_weight: 1.5 # 1.5
   fg_patch_size: 1
   bg_patch_size: 1
-  use_depth: True
+  use_depth: False
   base_model_path: weights/stable-diffusion-2-1-base
   depth_model_path: stabilityai/stable-diffusion-2-depth
   save_denoising_steps: false

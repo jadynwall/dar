@@ -56,3 +56,14 @@ def calc_target_mask(
     b = 5  # buffer
     target_mask[ty - h - b : ty + b, tx - w // 2 - b : tx + w // 2 + b] = 255
     return target_mask
+
+
+def get_mask_depth(
+    depth_map: npt.NDArray[np.uint8], mask: npt.NDArray[np.uint8]
+) -> tuple[float, float]:
+    """Returns the mean and std of all the depth values inside the mask."""
+
+    masked_depth = depth_map[mask > 0]
+    mean_depth = float(masked_depth.mean())
+    std_depth = float(masked_depth.std())
+    return mean_depth, std_depth
