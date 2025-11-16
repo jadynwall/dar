@@ -26,8 +26,13 @@ from typing import Any
 from transformers import pipeline
 import pickle
 from utils.vis import draw_depth_pts
-from utils.img_proc import get_object_mask, extract_masked_object, calc_target_mask
+from utils.img_proc import (
+    get_object_mask,
+    extract_masked_object,
+    calc_target_mask,
+)
 import json
+from utils.metrics import calc_metrics
 
 # Results are stored in a timestamped folder:
 RESULTS_BASE_DIR = "results/new_object_placement/{}"
@@ -43,13 +48,13 @@ def load_anydoor() -> torch.nn.Module:
 def build_mpi_masks(
     background_crop: npt.NDArray[np.uint8],
     depth_image: PILImageModule.Image,
-    target_depth: int,
+    target_depth: float,
     device: torch.device,
     debug_dir: Path | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, list[npt.NDArray[np.uint8]]]:
     """Generate background/foreground MPI masks along with the high-res originals."""
 
-    depth_partition: list[tuple[int, int]] = [
+    depth_partition: list[tuple[float, float]] = [
         (0, target_depth),
         (target_depth, 300),
     ]
@@ -276,27 +281,6 @@ def null_text_invert(
     )
 
 
-def calc_metrics() -> dict[str, float]:
-    metrics = {
-        # mean & std of depth inside mask before and after move
-        "z_mean_before": 0,
-        "z_std_before": 0,
-        "z_mean_after": 0,
-        "z_std_after": 0,
-        "z_mean_delta": 0,
-        "depth_ratio": z_mean_before / z_mean_after,
-        # pixel area of the object mask
-        "area_before": 0,
-        "area_after": 0,
-        # the multiplicative scale factor requested and observed
-        "scale_applied": 0,
-        "scale_observed": np.sqrt(area_after / area_before),
-        "scale_error": np.abs(scale_observed - depth_ratio),
-        "scale_error_rel": np.abs(scale_observed - depth_ratio) / depth_ratio,
-    }
-    return metrics
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Place an object in scene.")
     parser.add_argument(
@@ -313,6 +297,13 @@ def parse_args() -> argparse.Namespace:
         "--skip-diffusion",
         action="store_true",
         help="Just generate the collage and skip generating final image",
+    )
+    parser.add_argument(
+        "--sample-indexes",
+        nargs="+",
+        type=int,
+        default=None,
+        help="When provided, only run these dataset indices.",
     )
     return parser.parse_args()
 
@@ -343,7 +334,11 @@ if __name__ == "__main__":
         anydoor = load_anydoor()
         ddim_sampler = DDIMSampler(anydoor)
 
+    filter_indices = set(args.sample_indexes) if args.sample_indexes else None
+
     for dataset_idx, background_image, source_px, target_px in loader:
+        if filter_indices is not None and dataset_idx not in filter_indices:
+            continue
         # Create output directories
         results_dir = timestamped_results_dir / str(dataset_idx)
         debug_dir = results_dir / "debug"
@@ -355,8 +350,11 @@ if __name__ == "__main__":
         full_depth_image: Image = depth_pipeline(  # type: ignore
             PILImageModule.fromarray(background_image)
         )["depth"]
-        source_depth = full_depth_image.getpixel(tuple(source_px))
-        target_depth = full_depth_image.getpixel(tuple(target_px))
+        source_depth = float(full_depth_image.getpixel(tuple(source_px)))
+        target_depth = float(full_depth_image.getpixel(tuple(target_px)))
+        scale_applied = (
+            target_depth / source_depth if target_depth != 0 else float("nan")
+        )
 
         # Draw the source and target point on the background image.
         if args.debug:
@@ -483,7 +481,7 @@ if __name__ == "__main__":
             "activation_fore": nti_result.activations,
         }
 
-        gen_image = inference_single_image(
+        result_image = inference_single_image(
             mpi_data_dict=mpi_data_dict,
             alignment_result=alignment_result,
             background_image=background_image.copy(),
@@ -499,8 +497,17 @@ if __name__ == "__main__":
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        cv2.imwrite(str(results_dir / "result.png"), gen_image[:, :, ::-1])
+        result_image = np.clip(result_image, 0, 255).astype(np.uint8)
+        cv2.imwrite(str(results_dir / "result.png"), result_image[:, :, ::-1])
 
-        metrics = calc_metrics()
-        with open("metrics.json", "w") as file:
+        metrics = calc_metrics(
+            background_image=background_image,
+            result_image=result_image,
+            depth_map=full_depth_image,
+            source_mask=object_mask.astype(np.uint8),
+            target_mask=target_mask.astype(np.uint8),
+            scale_applied=scale_applied,
+        )
+
+        with open(results_dir / "metrics.json", "w") as file:
             json.dump(metrics, file, indent=4)

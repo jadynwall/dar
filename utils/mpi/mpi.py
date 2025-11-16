@@ -9,7 +9,7 @@ import numpy.typing as npt
 def get_mpi_rgb_and_alpha(
     input_img: npt.NDArray[np.uint8],
     depth_img: npt.NDArray[np.uint8],
-    depth_partition: list[tuple[int, int]],
+    depth_partition: list[tuple[float, float]],
 ) -> tuple[list[npt.NDArray[np.uint8]], list[npt.NDArray[np.float64]]]:
 
     mpi_rgb: list[npt.NDArray[np.uint8]] = []
