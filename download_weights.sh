@@ -11,3 +11,4 @@ wget https://dl.fbaipublicfiles.com/dinov2/dinov2_vitg14/dinov2_vitg14_pretrain.
 # Downloading anydoor weights
 wget https://huggingface.co/spaces/xichenhku/AnyDoor/resolve/main/epoch%3D1-step%3D8687.ckpt
 
+huggingface-cli download Manojb/stable-diffusion-2-1-base --local-dir stable-diffusion-2-1-base --local-dir-use-symlinks False
