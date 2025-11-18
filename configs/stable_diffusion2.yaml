@@ -65,3 +65,6 @@ model:
       params:
         freeze: True
         layer: "penultimate"
+
+# Use local Stable Diffusion 2.1 weights by default
+base_model_path: weights/stable-diffusion-2-1-base
