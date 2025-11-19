@@ -19,7 +19,7 @@ import json
 import attrs
 
 NPImage = npt.NDArray[np.uint8]
-NPPixel = npt.NDArray[np.int32]  # x,y
+NPPixel = npt.NDArray[np.intp]  # x,y
 
 
 class CSC2529Dataset(Dataset[tuple[int, NPImage, NPPixel, NPPixel]]):
@@ -98,7 +98,7 @@ class AnyDoorCollage:
         collage_mask = (np.clip(self.collage[:, :, 3], 0.0, 1.0) * 255).astype(np.uint8)
         Image.fromarray(collage_mask).save(output_dir / "collage_mask.png")
 
-        Image.fromarray(self.target_mpi_mask.astype(np.uint8)).save(
+        Image.fromarray(self.target_mpi_mask * 255).save(
             output_dir / "target_mpi_mask.png"
         )
 
@@ -107,7 +107,7 @@ def create_anydoor_collage(
     bg_image: NPImage,
     object_image: NPImage,
     object_mask: NPImage,
-    target_mask: NPImage,
+    target_mask: npt.NDArray[np.bool_],
     shape_control: bool = False,
 ) -> AnyDoorCollage:
     """
@@ -174,7 +174,9 @@ def create_anydoor_collage(
     # transforming mask for mpi according to tar_image
     tar_mask_mpi = target_mask.copy()
     tar_mask_mpi_cropped = tar_mask_mpi[y1:y2, x1:x2]
-    tar_mask_mpi_cropped = cv2.cvtColor(tar_mask_mpi_cropped, cv2.COLOR_GRAY2RGB)
+    tar_mask_mpi_cropped = cv2.cvtColor(
+        tar_mask_mpi_cropped.astype(np.uint8), cv2.COLOR_GRAY2RGB
+    )
 
     cropped_bg_image = bg_image[y1:y2, x1:x2, :]
     cropped_tar_mask = target_mask[y1:y2, x1:x2]

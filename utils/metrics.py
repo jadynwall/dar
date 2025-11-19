@@ -2,10 +2,19 @@ import numpy.typing as npt
 import numpy as np
 from PIL import Image as PILImageModule
 from PIL.Image import Image
-from torch_fidelity import calculate_metrics as fidelity_calculate_metrics
 import torch
 import tempfile
 from pathlib import Path
+from torch_fidelity import calculate_metrics as fidelity_calculate_metrics
+from transformers import Pipeline
+from ldm.modules.image_degradation.utils_image import calculate_ssim
+from utils.img_proc import get_object_mask
+import warnings
+
+# torch-fidelity still uses torch.TypedStorage internally; silence the deprecation noise.
+warnings.filterwarnings(
+    "ignore", message="TypedStorage is deprecated", category=UserWarning
+)
 
 
 def get_mask_depth(
@@ -47,13 +56,57 @@ def compute_fid_score(
     return float(fid_metrics["frechet_inception_distance"])
 
 
+def calc_mask_iou(
+    source_px: npt.NDArray[np.intp],
+    source_image: npt.NDArray[np.uint8],
+    target_px: npt.NDArray[np.intp],
+    result_image: npt.NDArray[np.uint8],
+    sam_pipeline: Pipeline,
+) -> float:
+    """Calculates the IOU of the source and observed objects.
+    Uses the SAM model to segment the observed object at the center of the target mask.
+    """
+
+    try:
+        source_mask = get_object_mask(source_image, source_px, sam_pipeline)
+        observed_mask = get_object_mask(result_image, target_px, sam_pipeline)
+    except RuntimeError:
+        return float("nan")  # No object was found at the pixel by SAM
+
+    # Get the mask bounding boxes
+    source_pil_mask = PILImageModule.fromarray(
+        source_mask.astype(np.uint8) * 255, mode="L"
+    )
+    source_bbox = source_pil_mask.getbbox()
+    source_crop = source_pil_mask.crop(source_bbox)
+
+    observed_pil_mask = PILImageModule.fromarray(
+        observed_mask.astype(np.uint8) * 255, mode="L"
+    )
+    observed_bbox = observed_pil_mask.getbbox()
+    observed_crop = observed_pil_mask.crop(observed_bbox)
+
+    # Resize the source crop
+    source_crop = source_crop.resize(observed_crop.size)
+
+    # Compute IOU
+    source_crop_np = np.asarray(source_crop)
+    observed_crop_np = np.asarray(observed_crop)
+    intersection = np.logical_and(source_crop_np, observed_crop_np).sum()
+    union = np.logical_or(source_crop_np, observed_crop_np).sum()
+    return float(intersection / union) if union > 0 else float("nan")
+
+
 def calc_metrics(
     background_image: npt.NDArray[np.uint8],
     result_image: npt.NDArray[np.uint8],
     depth_map: Image,
-    source_mask: npt.NDArray[np.uint8],
-    target_mask: npt.NDArray[np.uint8],
+    source_mask: npt.NDArray[np.bool_],
+    target_mask: npt.NDArray[np.bool_],
     scale_applied: float,
+    timings: dict[str, float],
+    sam_pipeline: Pipeline,
+    source_px: npt.NDArray[np.intp],
 ) -> dict[str, float]:
     """Metrics metrics metrics."""
 
@@ -93,12 +146,22 @@ def calc_metrics(
             float(scale_error / depth_ratio) if depth_ratio != 0 else float("nan")
         )
 
-    fid_score = compute_fid_score(
-        result_image,
-        background_image,
+    fid_score = compute_fid_score(result_image, background_image)
+    ssim_score = float(calculate_ssim(result_image, background_image))  # type: ignore
+
+    x, y = np.where(np.array(target_mask, dtype=np.bool_))
+    target_mask_center = np.floor(np.array(list(zip(y, x))).mean(axis=0)).astype(
+        np.intp
+    )
+    mask_iou = calc_mask_iou(
+        source_px=source_px,
+        source_image=background_image,
+        target_px=target_mask_center,
+        result_image=result_image,
+        sam_pipeline=sam_pipeline,
     )
 
-    metrics = {
+    metrics: dict[str, float] = {
         "z_mean_before": z_mean_before,
         "z_std_before": z_std_before,
         "z_mean_after": z_mean_after,
@@ -107,10 +170,13 @@ def calc_metrics(
         "depth_ratio": depth_ratio,
         "area_before": area_before,
         "area_after": area_after,
-        "scale_applied": float(scale_applied),
+        "scale_applied": scale_applied,
         "scale_observed": scale_observed,
         "scale_error": scale_error,
         "scale_error_rel": scale_error_rel,
         "fid": fid_score,
+        "ssim": ssim_score,
+        "mask_iou": mask_iou,
     }
+    metrics.update({key: float(value) for key, value in timings.items()})
     return metrics

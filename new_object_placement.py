@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 from datetime import datetime
 from pytorch_lightning import seed_everything
 import os
+import time
 from utils.mpi.preprocess import get_depth_and_sam_mask
 from cldm.ddim_hacked_mpi_featguidance import DDIMSampler
 from utils.mpi.mpi import get_mpi_rgb_and_alpha
@@ -32,7 +33,15 @@ from utils.img_proc import (
     calc_target_mask,
 )
 import json
+import warnings
 from utils.metrics import calc_metrics
+
+# HF pipelines emit a noisy FutureWarning about clean_up_tokenization_spaces; silence it.
+warnings.filterwarnings(
+    "ignore",
+    message="`clean_up_tokenization_spaces` was not set",
+    category=FutureWarning,
+)
 
 # Results are stored in a timestamped folder:
 RESULTS_BASE_DIR = "results/new_object_placement/{}"
@@ -339,6 +348,8 @@ if __name__ == "__main__":
     for dataset_idx, background_image, source_px, target_px in loader:
         if filter_indices is not None and dataset_idx not in filter_indices:
             continue
+        iter_start = time.perf_counter()
+        timings: dict[str, float] = {}
         # Create output directories
         results_dir = timestamped_results_dir / str(dataset_idx)
         debug_dir = results_dir / "debug"
@@ -347,6 +358,7 @@ if __name__ == "__main__":
             os.makedirs(debug_dir)
 
         # Calculate the depth of the source and target points
+        depth_start = time.perf_counter()
         full_depth_image: Image = depth_pipeline(  # type: ignore
             PILImageModule.fromarray(background_image)
         )["depth"]
@@ -355,6 +367,7 @@ if __name__ == "__main__":
         scale_applied = (
             target_depth / source_depth if target_depth != 0 else float("nan")
         )
+        timings["time_full_depth"] = time.perf_counter() - depth_start
 
         # Draw the source and target point on the background image.
         if args.debug:
@@ -368,11 +381,12 @@ if __name__ == "__main__":
             PILImageModule.fromarray(pts_preview).save(debug_dir / "input_preview.png")
 
         # Extract the SAM mask and corresponding sub-image that intersect source_px
+        obj_prep_start = time.perf_counter()
         object_mask = get_object_mask(background_image, source_px, sam_pipeline)
         cropped_object_rgba = extract_masked_object(background_image, object_mask)
 
         # Calculate target mask based on depth scaling
-        target_mask = calc_target_mask(
+        target_mask: npt.NDArray[np.bool_] = calc_target_mask(
             image=background_image,
             source_object=cropped_object_rgba,
             target_px=target_px,
@@ -380,40 +394,46 @@ if __name__ == "__main__":
             target_depth=target_depth,
         )
 
-        alignment_result = create_anydoor_collage(
+        anydoor_collage = create_anydoor_collage(
             bg_image=background_image,
             object_image=cropped_object_rgba[:, :, :3],
             object_mask=cropped_object_rgba[:, :, -1],
             target_mask=target_mask,
         )
-        if debug_dir:
-            alignment_result.save(debug_dir)
+        if args.debug:
+            PILImageModule.fromarray(target_mask.astype(np.uint8) * 255, mode="L").save(
+                debug_dir / "target_mask.png"
+            )
+            anydoor_collage.save(debug_dir)
 
         # Resize sam mask to 512 because the object_bbox_for_sam that create_anydoor_collage
         # returns is still expressed in the crop’s native resolution, i.e., before
         # the crop is padded and resized.
-        y1, y2, x1, x2 = alignment_result.target_box_yyxx_crop
-        oy1, oy2, ox1, ox2 = alignment_result.object_bbox_for_sam
+        y1, y2, x1, x2 = anydoor_collage.target_box_yyxx_crop
+        oy1, oy2, ox1, ox2 = anydoor_collage.object_bbox_for_sam
         r = 512 / (y2 - y1)
-        alignment_result.object_bbox_for_sam = np.array(
+        anydoor_collage.object_bbox_for_sam = np.array(
             [oy1 * r, oy2 * r, ox1 * r, ox2 * r]
         )
-        bg_image_cropped = ((alignment_result.background * 127.5) + 127.5).astype(
+        bg_image_cropped = ((anydoor_collage.background * 127.5) + 127.5).astype(
             np.uint8
         )
+        timings["time_object_prep"] = time.perf_counter() - obj_prep_start
 
         # Calculate the depth and sam masks of scene objects
+        scene_masks_start = time.perf_counter()
         depth, sam_mask = get_depth_and_sam_mask(
             PILImageModule.fromarray(bg_image_cropped),
             depth_pipe=depth_pipeline,
             sam_pipe=sam_pipeline,
             is_relative_depth=True,
         )
+        timings["time_scene_masks"] = time.perf_counter() - scene_masks_start
 
         if args.debug:
             depth.save(f"{debug_dir}/depth.png")
-            print("Target Depth:", target_depth)
 
+        mpi_start = time.perf_counter()
         (
             mpi_background_alpha,
             mpi_foreground_alpha,
@@ -425,11 +445,13 @@ if __name__ == "__main__":
             device=device,
             debug_dir=debug_dir,
         )
+        timings["time_mpi_build"] = time.perf_counter() - mpi_start
 
         if args.skip_diffusion:
             continue
 
         # Move Diffusion Handles to GPU for null-text inversion
+        null_text_start = time.perf_counter()
         diff_handles.to(device)
         null_text_cache_file = f"{cache_dir}/null_text_{dataset_idx}.pickle"
         try:
@@ -444,6 +466,7 @@ if __name__ == "__main__":
             with open(null_text_cache_file, "wb") as nti_pickle_file:
                 pickle.dump(nti_result, nti_pickle_file)
                 print("Saved null-text inversion to cache")
+        timings["time_null_text"] = time.perf_counter() - null_text_start
 
         # Reconstruct image to debug if inversion is correct
         if args.debug:
@@ -459,7 +482,7 @@ if __name__ == "__main__":
                 latent_image = latent_image.permute(0, 2, 3, 1).squeeze().cpu().numpy()
                 latent_image = (latent_image * 255).astype(np.uint8)
                 cv2.imwrite(
-                    f"{debug_dir}/recon_fg.jpg",
+                    str(debug_dir / "recon_fg.jpg"),
                     cv2.cvtColor(latent_image, cv2.COLOR_RGB2BGR),
                 )
 
@@ -481,15 +504,17 @@ if __name__ == "__main__":
             "activation_fore": nti_result.activations,
         }
 
+        diffusion_start = time.perf_counter()
         result_image = inference_single_image(
             mpi_data_dict=mpi_data_dict,
-            alignment_result=alignment_result,
+            alignment_result=anydoor_collage,
             background_image=background_image.copy(),
             anydoor=anydoor,
             ddim_sampler=ddim_sampler,
             guidance_scale=5.0,
             save_memory=True,
         )
+        timings["time_diffusion"] = time.perf_counter() - diffusion_start
 
         # Unload AnyDoor from GPU before next iteration
         anydoor.to("cpu")
@@ -498,15 +523,22 @@ if __name__ == "__main__":
             torch.cuda.empty_cache()
 
         result_image = np.clip(result_image, 0, 255).astype(np.uint8)
-        cv2.imwrite(str(results_dir / "result.png"), result_image[:, :, ::-1])
+        cv2.imwrite(
+            str(results_dir / "result.png"),
+            cv2.cvtColor(result_image, cv2.COLOR_RGB2BGR),
+        )
 
+        timings["time_iteration_total"] = time.perf_counter() - iter_start
         metrics = calc_metrics(
             background_image=background_image,
             result_image=result_image,
             depth_map=full_depth_image,
-            source_mask=object_mask.astype(np.uint8),
-            target_mask=target_mask.astype(np.uint8),
+            source_mask=object_mask,
+            target_mask=target_mask,
             scale_applied=scale_applied,
+            timings=timings,
+            sam_pipeline=sam_pipeline,
+            source_px=source_px,
         )
 
         with open(results_dir / "metrics.json", "w") as file:
