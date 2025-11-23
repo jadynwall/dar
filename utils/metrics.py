@@ -22,11 +22,11 @@ def get_mask_depth(
 ) -> tuple[float, float]:
     """Returns the mean and std of all the depth values inside the mask."""
 
-    masked_depth = depth_map[mask > 0]
-    if masked_depth.size == 0:
+    masked_disparity = depth_map[mask > 0]
+    if masked_disparity.size == 0:
         return float("nan"), float("nan")
-    mean_depth = float(masked_depth.mean())
-    std_depth = float(masked_depth.std())
+    mean_depth = 1.0 / float(masked_disparity.mean())
+    std_depth = 1.0 / float(masked_disparity.std())
     return mean_depth, std_depth
 
 
