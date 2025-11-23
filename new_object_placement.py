@@ -468,7 +468,10 @@ if __name__ == "__main__":
 
         # Extract the SAM mask and corresponding sub-image that intersect source_px
         obj_prep_start = time.perf_counter()
-        object_mask = get_object_mask(background_image, source_px, sam_pipeline)
+        try:
+            object_mask = get_object_mask(background_image, source_px, sam_pipeline)
+        except:
+            continue
         cropped_object_rgba = extract_masked_object(background_image, object_mask)
 
         # Remove object from image
