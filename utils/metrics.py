@@ -25,6 +25,8 @@ def get_mask_depth(
     masked_disparity = depth_map[mask > 0]
     if masked_disparity.size == 0:
         return float("nan"), float("nan")
+    if masked_disparity.mean() == 0 or masked_disparity.std() == 0:
+        return float("nan"), float("nan")
     mean_depth = 1.0 / float(masked_disparity.mean())
     std_depth = 1.0 / float(masked_disparity.std())
     return mean_depth, std_depth
