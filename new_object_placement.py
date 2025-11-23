@@ -35,6 +35,7 @@ from utils.img_proc import (
 import json
 import warnings
 from utils.metrics import calc_metrics
+from diffusers import AutoPipelineForInpainting
 
 # HF pipelines emit a noisy FutureWarning about clean_up_tokenization_spaces; silence it.
 warnings.filterwarnings(
@@ -52,6 +53,89 @@ def load_anydoor() -> torch.nn.Module:
     model = create_model(config.config_file)
     model.load_state_dict(load_state_dict(config.pretrained_model))
     return model
+
+def get_bbox_from_point(
+    image: npt.NDArray[np.uint8],
+    point: npt.NDArray[np.intp],
+    box_size: int,
+) -> tuple[int, int, int, int]:
+    """Get bounding box (y1, y2, x1, x2) of size box_size centered at point."""
+    H, W, _ = image.shape
+    half_size = box_size // 2
+    x, y = point
+    y1 = max(0, y - half_size)
+    y2 = min(H, y + half_size)
+    x1 = max(0, x - half_size)
+    x2 = min(W, x + half_size)
+
+    # Adjust box if it goes out of image bounds
+    if y2 - y1 < box_size:
+        if y1 == 0:
+            y2 = min(H, y1 + box_size)
+        else:
+            y1 = max(0, y2 - box_size)
+    if x2 - x1 < box_size:
+        if x1 == 0:
+            x2 = min(W, x1 + box_size)
+        else:
+            x1 = max(0, x2 - box_size)
+
+    return (y1, y2, x1, x2)
+
+
+def crop_with_bbox(
+    image: npt.NDArray[np.uint8],
+    mask: npt.NDArray[np.uint8],
+    bbox: tuple[int, int, int, int],
+) -> npt.NDArray[np.uint8]:
+    """Crop a square region around a given point in the image."""
+    y1, y2, x1, x2 = bbox
+
+    cropped_image = image[y1:y2, x1:x2]
+    cropped_mask = mask[y1:y2, x1:x2]
+    return cropped_image, cropped_mask
+
+def uncrop_with_bbox(
+    cropped_image: npt.NDArray[np.uint8],
+    original_image: npt.NDArray[np.uint8],
+    bbox: tuple[int, int, int, int],
+) -> npt.NDArray[np.uint8]:
+    """Paste cropped region back to original image."""
+    y1, y2, x1, x2 = bbox
+    original_image[y1:y2, x1:x2] = cropped_image
+    return original_image
+
+
+def remove_object(
+    background_image,
+    object_mask
+) -> npt.NDArray[np.uint8]:
+    """Remove object from background image using inpainting."""
+    sam_mask = object_mask.astype(np.uint8) * 255
+    kernel = np.ones((10,10), np.uint8)
+    sam_mask = cv2.dilate(sam_mask.copy(), kernel, iterations=1)
+    sam_mask = cv2.GaussianBlur(sam_mask.copy(), (5, 5), 0)
+    sam_mask = cv2.dilate(sam_mask.copy(), kernel, iterations=1)
+    mask_pil = PILImageModule.fromarray(sam_mask).convert("L")
+    init_image = PILImageModule.fromarray(background_image)
+
+    pipeline = AutoPipelineForInpainting.from_pretrained(
+        "weights/stable-diffusion-2-1-base", torch_dtype=torch.float16, variant="fp16", local_files_only=True
+    )
+
+    pipeline = pipeline.to(0)
+    pipeline.enable_model_cpu_offload()
+
+    generator_device = "cuda" if torch.cuda.is_available() else "cpu"
+    generator = torch.Generator(device=generator_device)
+    image = pipeline(
+        prompt="high quality, high resolution, indoor scene",
+        negative_prompt="object",
+        image=init_image,
+        mask_image=mask_pil,
+        generator=generator,
+    ).images[0]
+    return np.array(image)
 
 
 def build_mpi_masks(
@@ -384,6 +468,23 @@ if __name__ == "__main__":
         obj_prep_start = time.perf_counter()
         object_mask = get_object_mask(background_image, source_px, sam_pipeline)
         cropped_object_rgba = extract_masked_object(background_image, object_mask)
+
+        # Remove object from image
+        # Operate on 512 by 512 pixels centered at source_px
+        bbox = get_bbox_from_point(background_image, source_px, box_size=512)
+        background_image_cropped, object_mask_cropped = crop_with_bbox(
+            background_image, object_mask, bbox
+        )
+        # Remove object from cropped image
+        background_image_cropped = remove_object(
+            background_image_cropped.copy(), object_mask_cropped.copy()
+        )
+        # Paste cropped image back to original image
+        background_image = uncrop_with_bbox(
+            background_image_cropped,
+            background_image,
+            bbox
+        )
 
         # Calculate target mask based on depth scaling
         target_mask: npt.NDArray[np.bool_] = calc_target_mask(
