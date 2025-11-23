@@ -159,11 +159,11 @@ def build_mpi_masks(
         bg_np = np.array(background_crop)
         cv2.imwrite(
             str(debug_dir / "mpi_foreground_alpha.png"),
-            bg_np * layered_alpha[1][:, :, None],
+            cv2.cvtColor(bg_np, cv2.COLOR_RGB2BGR) * layered_alpha[1][:, :, None],
         )
         cv2.imwrite(
             str(debug_dir / "mpi_background_alpha.png"),
-            bg_np * layered_alpha[0][:, :, None],
+            cv2.cvtColor(bg_np, cv2.COLOR_RGB2BGR) * layered_alpha[0][:, :, None],
         )
 
     background_alpha = layered_alpha[0]
@@ -473,23 +473,25 @@ if __name__ == "__main__":
         except:
             continue
         cropped_object_rgba = extract_masked_object(background_image, object_mask)
-
+        
         # Remove object from image
-        # Operate on 512 by 512 pixels centered at source_px
         bbox = get_bbox_from_point(background_image, source_px, box_size=512)
         background_image_cropped, object_mask_cropped = crop_with_bbox(
             background_image, object_mask, bbox
         )
-        # Remove object from cropped image
         background_image_cropped = remove_object(
             background_image_cropped.copy(), object_mask_cropped.copy()
         )
-        # Paste cropped image back to original image
         background_image = uncrop_with_bbox(
             background_image_cropped,
             background_image,
             bbox
         )
+        if args.debug:
+            cv2.imwrite(
+                str(debug_dir / "cropped_inpainted_result.png"),
+                cv2.cvtColor(background_image_cropped, cv2.COLOR_RGB2BGR),
+            )
 
         # Calculate target mask based on depth scaling
         target_mask: npt.NDArray[np.bool_] = calc_target_mask(
