@@ -446,8 +446,9 @@ if __name__ == "__main__":
         full_depth_image: Image = depth_pipeline(  # type: ignore
             PILImageModule.fromarray(background_image)
         )["depth"]
-        source_depth = float(full_depth_image.getpixel(tuple(source_px)))
-        target_depth = float(full_depth_image.getpixel(tuple(target_px)))
+        # Depth-Anything outputs disparities, not depth, in relative-mode.
+        source_depth = 1.0 / float(full_depth_image.getpixel(tuple(source_px)))
+        target_depth = 1.0 / float(full_depth_image.getpixel(tuple(target_px)))
         scale_applied = (
             target_depth / source_depth if target_depth != 0 else float("nan")
         )
@@ -463,6 +464,7 @@ if __name__ == "__main__":
                 target_depth=target_depth,
             )
             PILImageModule.fromarray(pts_preview).save(debug_dir / "input_preview.png")
+            full_depth_image.save(debug_dir / "full_depth.png")
 
         # Extract the SAM mask and corresponding sub-image that intersect source_px
         obj_prep_start = time.perf_counter()
