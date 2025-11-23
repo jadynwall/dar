@@ -147,9 +147,11 @@ def build_mpi_masks(
 ) -> tuple[torch.Tensor, torch.Tensor, list[npt.NDArray[np.uint8]]]:
     """Generate background/foreground MPI masks along with the high-res originals."""
 
+    target_disparity = 1.0 / target_depth
+
     depth_partition: list[tuple[float, float]] = [
-        (0, target_depth),
-        (target_depth, 300),
+        (0, target_disparity),
+        (target_disparity, 300),
     ]
     _, layered_alpha = get_mpi_rgb_and_alpha(
         np.array(background_crop), np.array(depth_image), depth_partition
@@ -450,7 +452,7 @@ if __name__ == "__main__":
         source_depth = 1.0 / float(full_depth_image.getpixel(tuple(source_px)))
         target_depth = 1.0 / float(full_depth_image.getpixel(tuple(target_px)))
         scale_applied = (
-            target_depth / source_depth if target_depth != 0 else float("nan")
+            source_depth / target_depth if target_depth != 0 else float("nan")
         )
         timings["time_full_depth"] = time.perf_counter() - depth_start
 
