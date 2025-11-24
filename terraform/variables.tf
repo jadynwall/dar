@@ -31,5 +31,5 @@ variable "gpu_type" {
 variable "perma_disk_size_gb" {
   description = "Size of the additional persistent SSD disk."
   type        = number
-  default     = 100
+  default     = 200
 }
