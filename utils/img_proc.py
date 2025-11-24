@@ -13,9 +13,15 @@ def get_object_mask(
     outputs = sam_pipeline(PILImageModule.fromarray(image), points_per_batch=64)
     masks = outputs["masks"]  # type: ignore
     x, y = px
+    largest_mask = None
     for mask in masks:
-        if mask[y, x] == 1:
-            return mask  # type: ignore
+        if mask[y, x] == 1 and (
+            largest_mask is None or np.sum(mask) > np.sum(largest_mask)
+        ):
+            largest_mask = mask
+
+    if largest_mask is not None:
+        return largest_mask  # type: ignore
     else:
         raise RuntimeError("SAM couldn't find an object at the given point")
 
@@ -52,7 +58,7 @@ def calc_target_mask(
     """
 
     scale_factor = source_depth / target_depth
-    h, w = (np.array(source_object.shape[:2]) * scale_factor).astype(np.uint8)
+    h, w = (np.array(source_object.shape[:2]) * scale_factor).astype(np.uint32)
     tx, ty = target_px
     target_mask = np.zeros(image.shape[:2], dtype=np.bool_)
     b = 5  # buffer

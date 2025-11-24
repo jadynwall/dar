@@ -54,6 +54,7 @@ def load_anydoor() -> torch.nn.Module:
     model.load_state_dict(load_state_dict(config.pretrained_model))
     return model
 
+
 def get_bbox_from_point(
     image: npt.NDArray[np.uint8],
     point: npt.NDArray[np.intp],
@@ -85,15 +86,16 @@ def get_bbox_from_point(
 
 def crop_with_bbox(
     image: npt.NDArray[np.uint8],
-    mask: npt.NDArray[np.uint8],
+    mask: npt.NDArray[np.bool_],
     bbox: tuple[int, int, int, int],
-) -> npt.NDArray[np.uint8]:
+) -> tuple[npt.NDArray[np.uint8], npt.NDArray[np.bool_]]:
     """Crop a square region around a given point in the image."""
     y1, y2, x1, x2 = bbox
 
     cropped_image = image[y1:y2, x1:x2]
     cropped_mask = mask[y1:y2, x1:x2]
     return cropped_image, cropped_mask
+
 
 def uncrop_with_bbox(
     cropped_image: npt.NDArray[np.uint8],
@@ -106,13 +108,10 @@ def uncrop_with_bbox(
     return original_image
 
 
-def remove_object(
-    background_image,
-    object_mask
-) -> npt.NDArray[np.uint8]:
+def remove_object(background_image, object_mask) -> npt.NDArray[np.uint8]:
     """Remove object from background image using inpainting."""
     sam_mask = object_mask.astype(np.uint8) * 255
-    kernel = np.ones((10,10), np.uint8)
+    kernel = np.ones((10, 10), np.uint8)
     sam_mask = cv2.dilate(sam_mask.copy(), kernel, iterations=1)
     sam_mask = cv2.GaussianBlur(sam_mask.copy(), (5, 5), 0)
     sam_mask = cv2.dilate(sam_mask.copy(), kernel, iterations=1)
@@ -120,7 +119,10 @@ def remove_object(
     init_image = PILImageModule.fromarray(background_image)
 
     pipeline = AutoPipelineForInpainting.from_pretrained(
-        "weights/stable-diffusion-2-1-base", torch_dtype=torch.float16, variant="fp16", local_files_only=True
+        "weights/stable-diffusion-2-1-base",
+        torch_dtype=torch.float16,
+        variant="fp16",
+        local_files_only=True,
     )
 
     pipeline = pipeline.to(0)
@@ -472,10 +474,12 @@ if __name__ == "__main__":
         obj_prep_start = time.perf_counter()
         try:
             object_mask = get_object_mask(background_image, source_px, sam_pipeline)
-        except:
+        except RuntimeError as e:
+            print(f"Skipping sample {dataset_idx}: {e}")
             continue
+
         cropped_object_rgba = extract_masked_object(background_image, object_mask)
-        
+
         # Remove object from image
         bbox = get_bbox_from_point(background_image, source_px, box_size=512)
         background_image_cropped, object_mask_cropped = crop_with_bbox(
@@ -485,9 +489,7 @@ if __name__ == "__main__":
             background_image_cropped.copy(), object_mask_cropped.copy()
         )
         background_image = uncrop_with_bbox(
-            background_image_cropped,
-            background_image,
-            bbox
+            background_image_cropped, background_image, bbox
         )
         if args.debug:
             cv2.imwrite(
