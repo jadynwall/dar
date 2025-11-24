@@ -107,7 +107,7 @@ def create_anydoor_collage(
     bg_image: NPImage,
     object_image: NPImage,
     object_mask: NPImage,
-    target_mask: npt.NDArray[np.bool_],
+    target_bbox_mask: npt.NDArray[np.bool_],
     shape_control: bool = False,
 ) -> AnyDoorCollage:
     """
@@ -161,8 +161,8 @@ def create_anydoor_collage(
     obj_image_collage = sobel(masked_obj_image_compose, obj_mask_compose / 255)
 
     # ========= Target ===========
-    tar_box_yyxx = get_bbox_from_mask(target_mask)
-    tar_box_yyxx = expand_bbox(target_mask, tar_box_yyxx, ratio=[1.1, 1.2])  # 1.1,1.2
+    tar_box_yyxx = get_bbox_from_mask(target_bbox_mask)
+    tar_box_yyxx = expand_bbox(target_bbox_mask, tar_box_yyxx, ratio=[1.1, 1.2])  # 1.1,1.2
 
     # crop
     tar_box_yyxx_crop = expand_bbox(
@@ -172,14 +172,14 @@ def create_anydoor_collage(
     y1, y2, x1, x2 = tar_box_yyxx_crop
 
     # transforming mask for mpi according to tar_image
-    tar_mask_mpi = target_mask.copy()
+    tar_mask_mpi = target_bbox_mask.copy()
     tar_mask_mpi_cropped = tar_mask_mpi[y1:y2, x1:x2]
     tar_mask_mpi_cropped = cv2.cvtColor(
         tar_mask_mpi_cropped.astype(np.uint8), cv2.COLOR_GRAY2RGB
     )
 
     cropped_bg_image = bg_image[y1:y2, x1:x2, :]
-    cropped_tar_mask = target_mask[y1:y2, x1:x2]
+    cropped_tar_mask = target_bbox_mask[y1:y2, x1:x2]
     tar_box_yyxx = box_in_box(tar_box_yyxx, tar_box_yyxx_crop)
     y1, y2, x1, x2 = tar_box_yyxx
 

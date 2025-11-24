@@ -43,7 +43,7 @@ def draw_depth_pts(
                 sy_text = sy + radius + 5
             draw.text(
                 _safe_coords(sx_text, sy_text),
-                f"S:{float(source_depth):.2f}",
+                f"S:{float(source_depth):.4f}",
                 font=font,
                 fill=(0, 0, 255),
             )
@@ -55,7 +55,7 @@ def draw_depth_pts(
                 ty_text = ty + radius + 5
             draw.text(
                 _safe_coords(tx_text, ty_text),
-                f"T:{float(target_depth):.2f}",
+                f"T:{float(target_depth):.4f}",
                 font=font,
                 fill=(0, 255, 0),
             )

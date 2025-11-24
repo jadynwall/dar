@@ -30,7 +30,7 @@ from utils.vis import draw_depth_pts
 from utils.img_proc import (
     get_object_mask,
     extract_masked_object,
-    calc_target_mask,
+    calc_target_bbox_mask,
 )
 import json
 import warnings
@@ -498,7 +498,7 @@ if __name__ == "__main__":
             )
 
         # Calculate target mask based on depth scaling
-        target_mask: npt.NDArray[np.bool_] = calc_target_mask(
+        target_bbox_mask: npt.NDArray[np.bool_] = calc_target_bbox_mask(
             image=background_image,
             source_object=cropped_object_rgba,
             target_px=target_px,
@@ -510,12 +510,15 @@ if __name__ == "__main__":
             bg_image=background_image,
             object_image=cropped_object_rgba[:, :, :3],
             object_mask=cropped_object_rgba[:, :, -1],
-            target_mask=target_mask,
+            target_bbox_mask=target_bbox_mask,
         )
         if args.debug:
-            PILImageModule.fromarray(target_mask.astype(np.uint8) * 255, mode="L").save(
-                debug_dir / "target_mask.png"
+            PILImageModule.fromarray(object_mask.astype(np.uint8) * 255, mode="L").save(
+                debug_dir / "object_mask.png"
             )
+            PILImageModule.fromarray(
+                target_bbox_mask.astype(np.uint8) * 255, mode="L"
+            ).save(debug_dir / "target_bbox_mask.png")
             anydoor_collage.save(debug_dir)
 
         # Resize sam mask to 512 because the object_bbox_for_sam that create_anydoor_collage
@@ -641,16 +644,16 @@ if __name__ == "__main__":
         )
 
         timings["time_iteration_total"] = time.perf_counter() - iter_start
+
         metrics = calc_metrics(
             background_image=background_image,
             result_image=result_image,
-            depth_map=full_depth_image,
             source_mask=object_mask,
-            target_mask=target_mask,
+            target_bbox_mask=target_bbox_mask,
             scale_applied=scale_applied,
             timings=timings,
             sam_pipeline=sam_pipeline,
-            source_px=source_px,
+            depth_pipeline=depth_pipeline,
         )
 
         with open(results_dir / "metrics.json", "w") as file:

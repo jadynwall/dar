@@ -44,7 +44,7 @@ def extract_masked_object(
     return np.array(extracted, dtype=np.uint8)
 
 
-def calc_target_mask(
+def calc_target_bbox_mask(
     image: npt.NDArray[np.uint8],
     source_object: npt.NDArray[np.uint8],
     target_px: npt.NDArray[np.uint8],

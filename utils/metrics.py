@@ -18,11 +18,11 @@ warnings.filterwarnings(
 
 
 def get_mask_depth(
-    depth_map: npt.NDArray[np.float32], mask: npt.NDArray[np.uint8]
+    depth_map: npt.NDArray[np.float32], mask: npt.NDArray[np.bool_]
 ) -> tuple[float, float]:
     """Returns the mean and std of all the depth values inside the mask."""
 
-    masked_disparity = depth_map[mask > 0]
+    masked_disparity = depth_map[mask]
     if masked_disparity.size == 0:
         return float("nan"), float("nan")
     if masked_disparity.mean() == 0 or masked_disparity.std() == 0:
@@ -59,21 +59,10 @@ def compute_fid_score(
 
 
 def calc_mask_iou(
-    source_px: npt.NDArray[np.intp],
-    source_image: npt.NDArray[np.uint8],
-    target_px: npt.NDArray[np.intp],
-    result_image: npt.NDArray[np.uint8],
-    sam_pipeline: Pipeline,
+    source_mask: npt.NDArray[np.bool_],
+    result_mask: npt.NDArray[np.bool_],
 ) -> float:
-    """Calculates the IOU of the source and observed objects.
-    Uses the SAM model to segment the observed object at the center of the target mask.
-    """
-
-    try:
-        source_mask = get_object_mask(source_image, source_px, sam_pipeline)
-        observed_mask = get_object_mask(result_image, target_px, sam_pipeline)
-    except RuntimeError:
-        return float("nan")  # No object was found at the pixel by SAM
+    """Calculates the IOU of the source and observed objects."""
 
     # Get the mask bounding boxes
     source_pil_mask = PILImageModule.fromarray(
@@ -82,45 +71,50 @@ def calc_mask_iou(
     source_bbox = source_pil_mask.getbbox()
     source_crop = source_pil_mask.crop(source_bbox)
 
-    observed_pil_mask = PILImageModule.fromarray(
-        observed_mask.astype(np.uint8) * 255, mode="L"
+    result_pil_mask = PILImageModule.fromarray(
+        result_mask.astype(np.uint8) * 255, mode="L"
     )
-    observed_bbox = observed_pil_mask.getbbox()
-    observed_crop = observed_pil_mask.crop(observed_bbox)
+    result_bbox = result_pil_mask.getbbox()
+    result_crop = result_pil_mask.crop(result_bbox)
 
     # Resize the source crop
-    source_crop = source_crop.resize(observed_crop.size)
+    source_crop = source_crop.resize(result_crop.size)
 
     # Compute IOU
     source_crop_np = np.asarray(source_crop)
-    observed_crop_np = np.asarray(observed_crop)
-    intersection = np.logical_and(source_crop_np, observed_crop_np).sum()
-    union = np.logical_or(source_crop_np, observed_crop_np).sum()
+    result_crop_np = np.asarray(result_crop)
+    intersection = np.logical_and(source_crop_np, result_crop_np).sum()
+    union = np.logical_or(source_crop_np, result_crop_np).sum()
     return float(intersection / union) if union > 0 else float("nan")
 
 
 def calc_metrics(
     background_image: npt.NDArray[np.uint8],
     result_image: npt.NDArray[np.uint8],
-    depth_map: Image,
     source_mask: npt.NDArray[np.bool_],
-    target_mask: npt.NDArray[np.bool_],
+    target_bbox_mask: npt.NDArray[np.bool_],
     scale_applied: float,
     timings: dict[str, float],
     sam_pipeline: Pipeline,
-    source_px: npt.NDArray[np.intp],
+    depth_pipeline: Pipeline,
 ) -> dict[str, float]:
     """Metrics metrics metrics."""
 
-    depth_np = np.asarray(depth_map, dtype=np.float32)
-    if depth_np.shape != source_mask.shape or depth_np.shape != target_mask.shape:
-        raise ValueError("Depth map and masks must share the same spatial dimensions.")
+    x, y = np.where(np.array(target_bbox_mask, dtype=np.bool_))
+    target_center_px = np.floor(np.array(list(zip(y, x))).mean(axis=0)).astype(np.intp)
+    target_mask: npt.NDArray[np.bool_] = get_object_mask(
+        result_image, target_center_px, sam_pipeline
+    )
 
-    source_mask_u8 = source_mask.astype(np.uint8)
-    target_mask_u8 = target_mask.astype(np.uint8)
+    bg_disparity: Image = depth_pipeline(  # type: ignore
+        PILImageModule.fromarray(background_image)
+    )["depth"]
+    res_disparity: Image = depth_pipeline(  # type: ignore
+        PILImageModule.fromarray(result_image)
+    )["depth"]
 
-    z_mean_before, z_std_before = get_mask_depth(depth_np, source_mask_u8)
-    z_mean_after, z_std_after = get_mask_depth(depth_np, target_mask_u8)
+    z_mean_before, z_std_before = get_mask_depth(np.asarray(bg_disparity), source_mask)
+    z_mean_after, z_std_after = get_mask_depth(np.asarray(res_disparity), target_mask)
     z_mean_delta = (
         float(z_mean_after - z_mean_before)
         if np.isfinite(z_mean_before) and np.isfinite(z_mean_after)
@@ -150,18 +144,7 @@ def calc_metrics(
 
     fid_score = compute_fid_score(result_image, background_image)
     ssim_score = float(calculate_ssim(result_image, background_image))  # type: ignore
-
-    x, y = np.where(np.array(target_mask, dtype=np.bool_))
-    target_mask_center = np.floor(np.array(list(zip(y, x))).mean(axis=0)).astype(
-        np.intp
-    )
-    mask_iou = calc_mask_iou(
-        source_px=source_px,
-        source_image=background_image,
-        target_px=target_mask_center,
-        result_image=result_image,
-        sam_pipeline=sam_pipeline,
-    )
+    mask_iou = calc_mask_iou(source_mask, target_mask)
 
     metrics: dict[str, float] = {
         "z_mean_before": z_mean_before,
