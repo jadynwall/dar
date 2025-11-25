@@ -11,6 +11,8 @@ from ldm.modules.image_degradation.utils_image import calculate_ssim
 from utils.img_proc import get_object_mask
 import warnings
 
+from utils.mpi.get_depth import get_depth_map
+
 # torch-fidelity still uses torch.TypedStorage internally; silence the deprecation noise.
 warnings.filterwarnings(
     "ignore", message="TypedStorage is deprecated", category=UserWarning
@@ -22,13 +24,13 @@ def get_mask_depth(
 ) -> tuple[float, float]:
     """Returns the mean and std of all the depth values inside the mask."""
 
-    masked_disparity = depth_map[mask]
-    if masked_disparity.size == 0:
+    masked_depth = depth_map[mask]
+    if masked_depth.size == 0:
         return float("nan"), float("nan")
-    if masked_disparity.mean() == 0 or masked_disparity.std() == 0:
+    if masked_depth.mean() == 0 or masked_depth.std() == 0:
         return float("nan"), float("nan")
-    mean_depth = 1.0 / float(masked_disparity.mean())
-    std_depth = 1.0 / float(masked_disparity.std())
+    mean_depth = float(masked_depth.mean())
+    std_depth = float(masked_depth.std())
     return mean_depth, std_depth
 
 
@@ -96,25 +98,25 @@ def calc_metrics(
     scale_applied: float,
     timings: dict[str, float],
     sam_pipeline: Pipeline,
-    depth_pipeline: Pipeline,
 ) -> dict[str, float]:
     """Metrics metrics metrics."""
 
+    # Calculate the center pixel of the target mask to select the object using SAM.
     x, y = np.where(np.array(target_bbox_mask, dtype=np.bool_))
     target_center_px = np.floor(np.array(list(zip(y, x))).mean(axis=0)).astype(np.intp)
-    target_mask: npt.NDArray[np.bool_] = get_object_mask(
-        result_image, target_center_px, sam_pipeline
-    )
+    try:
+        target_mask: npt.NDArray[np.bool_] = get_object_mask(
+            result_image, target_center_px, sam_pipeline
+        )
+    except RuntimeError as e:
+        print(e)
+        return {}
 
-    bg_disparity: Image = depth_pipeline(  # type: ignore
-        PILImageModule.fromarray(background_image)
-    )["depth"]
-    res_disparity: Image = depth_pipeline(  # type: ignore
-        PILImageModule.fromarray(result_image)
-    )["depth"]
+    bg_depth, _ = get_depth_map(PILImageModule.fromarray(background_image))
+    res_depth, _ = get_depth_map(PILImageModule.fromarray(result_image))
 
-    z_mean_before, z_std_before = get_mask_depth(np.asarray(bg_disparity), source_mask)
-    z_mean_after, z_std_after = get_mask_depth(np.asarray(res_disparity), target_mask)
+    z_mean_before, z_std_before = get_mask_depth(bg_depth, source_mask)
+    z_mean_after, z_std_after = get_mask_depth(res_depth, target_mask)
     z_mean_delta = (
         float(z_mean_after - z_mean_before)
         if np.isfinite(z_mean_before) and np.isfinite(z_mean_after)

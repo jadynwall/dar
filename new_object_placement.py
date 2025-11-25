@@ -11,6 +11,7 @@ from datetime import datetime
 from pytorch_lightning import seed_everything
 import os
 import time
+from utils.mpi.get_depth import get_depth_map
 from utils.mpi.preprocess import get_depth_and_sam_mask
 from cldm.ddim_hacked_mpi_featguidance import DDIMSampler
 from utils.mpi.mpi import get_mpi_rgb_and_alpha
@@ -149,14 +150,25 @@ def build_mpi_masks(
 ) -> tuple[torch.Tensor, torch.Tensor, list[npt.NDArray[np.uint8]]]:
     """Generate background/foreground MPI masks along with the high-res originals."""
 
-    target_disparity = 1.0 / target_depth
+    # Convert absolute depth to disparity so masks preserve the intended
+    # foreground/background ordering (larger disparity = closer).
+    depth_np = np.array(depth_image, dtype=np.float32)
+    disparity_map = np.divide(
+        1.0,
+        depth_np,
+        out=np.zeros_like(depth_np),
+        where=depth_np != 0,
+    )
+
+    eps = 1e-6
+    target_disparity = 1.0 / max(target_depth, eps)
 
     depth_partition: list[tuple[float, float]] = [
         (0, target_disparity),
         (target_disparity, 300),
     ]
     _, layered_alpha = get_mpi_rgb_and_alpha(
-        np.array(background_crop), np.array(depth_image), depth_partition
+        np.array(background_crop), disparity_map, depth_partition
     )
 
     if debug_dir is not None:
@@ -447,12 +459,12 @@ if __name__ == "__main__":
 
         # Calculate the depth of the source and target points
         depth_start = time.perf_counter()
-        full_depth_image: Image = depth_pipeline(  # type: ignore
+        full_depth_image, full_depth_vis = get_depth_map(
             PILImageModule.fromarray(background_image)
-        )["depth"]
-        # Depth-Anything outputs disparities, not depth, in relative-mode.
-        source_depth = 1.0 / float(full_depth_image.getpixel(tuple(source_px)))
-        target_depth = 1.0 / float(full_depth_image.getpixel(tuple(target_px)))
+        )
+
+        source_depth = float(full_depth_image[tuple(source_px[::-1])])
+        target_depth = float(full_depth_image[tuple(target_px[::-1])])
         scale_applied = (
             source_depth / target_depth if target_depth != 0 else float("nan")
         )
@@ -468,7 +480,7 @@ if __name__ == "__main__":
                 target_depth=target_depth,
             )
             PILImageModule.fromarray(pts_preview).save(debug_dir / "input_preview.png")
-            full_depth_image.save(debug_dir / "full_depth.png")
+            full_depth_vis.save(debug_dir / "full_depth.png")
 
         # Extract the SAM mask and corresponding sub-image that intersect source_px
         obj_prep_start = time.perf_counter()
@@ -541,12 +553,9 @@ if __name__ == "__main__":
             PILImageModule.fromarray(bg_image_cropped),
             depth_pipe=depth_pipeline,
             sam_pipe=sam_pipeline,
-            is_relative_depth=True,
+            is_relative_depth=False,
         )
         timings["time_scene_masks"] = time.perf_counter() - scene_masks_start
-
-        if args.debug:
-            depth.save(f"{debug_dir}/depth.png")
 
         mpi_start = time.perf_counter()
         (
@@ -653,8 +662,8 @@ if __name__ == "__main__":
             scale_applied=scale_applied,
             timings=timings,
             sam_pipeline=sam_pipeline,
-            depth_pipeline=depth_pipeline,
         )
+        print(metrics)
 
         with open(results_dir / "metrics.json", "w") as file:
             json.dump(metrics, file, indent=4)

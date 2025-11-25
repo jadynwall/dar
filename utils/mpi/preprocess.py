@@ -49,8 +49,8 @@ def get_depth_and_sam_mask(
     if is_relative_depth:
         depth = depth_pipe(image)["depth"]
     else:
-        actual_depth, visualise_depth = get_depth_map(image)
-        depth = (actual_depth, visualise_depth)
+        actual_depth, _ = get_depth_map(image)
+        depth = PILImageModule.fromarray(actual_depth)
     outputs = sam_pipe(image, points_per_batch=64)
     masks = outputs["masks"]
     final_mask = torch.zeros_like(torch.tensor(masks[0]))

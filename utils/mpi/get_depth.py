@@ -1,31 +1,39 @@
-import torch
 import sys
+from pathlib import Path
+from typing import Tuple
 
-sys.path.append("./src/Depth-Anything/metric_depth/")
+import torch
+
+repo_root = Path(__file__).resolve().parents[2]
+depth_anything_path = repo_root / "src/Depth-Anything/metric_depth"
+if str(depth_anything_path) not in sys.path:
+    sys.path.append(str(depth_anything_path))
 from zoedepth.models.builder import build_model
 from zoedepth.utils.config import get_config
 
-from PIL import Image
-import numpy as np
 import cv2
+import numpy as np
 import torchvision.transforms as transforms
+from PIL import Image
 
 
-FL = 715.0873
-FY = 256 * 0.6
-FX = 256 * 0.6
-NYU_DATASET = "nyu"
-model_name = "zoedepth"
-pretrained_resource = "local::./weights/depth_anything_metric_depth_indoor.pt"
+FL: float = 715.0873
+FY: float = 256 * 0.6
+FX: float = 256 * 0.6
+NYU_DATASET: str = "nyu"
+model_name: str = "zoedepth"
+pretrained_resource: str = "local::./weights/depth_anything_metric_depth_indoor.pt"
 # pretrained_resource = "local::/mnt/data/rishubh/sachi/AnyDoor/weights/depth_anything_metric_depth_indoor.pt"
 
 config = get_config(model_name, "eval", NYU_DATASET)
 config.pretrained_resource = pretrained_resource
-depth_model = build_model(config).to("cuda" if torch.cuda.is_available() else "cpu")
+depth_model: torch.nn.Module = build_model(config).to(
+    "cuda" if torch.cuda.is_available() else "cpu"
+)
 depth_model.eval()
 
 
-def get_depth_map(image):
+def get_depth_map(image: Image.Image) -> Tuple[np.ndarray, Image.Image]:
     input_image = image
     W, H = input_image.size
     image_tensor = (
