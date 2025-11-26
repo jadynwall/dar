@@ -49,6 +49,25 @@ warnings.filterwarnings(
 RESULTS_BASE_DIR = "results/new_object_placement/{}"
 
 
+def load_inpaint_pipeline(device: torch.device) -> AutoPipelineForInpainting:
+    """Create a reusable inpainting pipeline."""
+    kwargs: dict[str, Any] = {"local_files_only": True}
+    if device.type == "cuda":
+        kwargs.update({"torch_dtype": torch.float16, "variant": "fp16"})
+
+    pipeline = AutoPipelineForInpainting.from_pretrained(
+        "weights/stable-diffusion-2-1-base", **kwargs
+    )
+
+    if device.type == "cuda":
+        pipeline.enable_model_cpu_offload()
+    else:
+        pipeline.to(device)
+
+    pipeline.set_progress_bar_config(disable=True)
+    return pipeline
+
+
 def load_anydoor() -> torch.nn.Module:
     config = OmegaConf.load("./configs/inference.yaml")
     model = create_model(config.config_file)
@@ -109,7 +128,12 @@ def uncrop_with_bbox(
     return original_image
 
 
-def remove_object(background_image, object_mask) -> npt.NDArray[np.uint8]:
+def remove_object(
+    background_image: npt.NDArray[np.uint8],
+    object_mask: npt.NDArray[np.bool_],
+    pipeline: AutoPipelineForInpainting,
+    generator: torch.Generator,
+) -> npt.NDArray[np.uint8]:
     """Remove object from background image using inpainting."""
     sam_mask = object_mask.astype(np.uint8) * 255
     kernel = np.ones((10, 10), np.uint8)
@@ -119,18 +143,6 @@ def remove_object(background_image, object_mask) -> npt.NDArray[np.uint8]:
     mask_pil = PILImageModule.fromarray(sam_mask).convert("L")
     init_image = PILImageModule.fromarray(background_image)
 
-    pipeline = AutoPipelineForInpainting.from_pretrained(
-        "weights/stable-diffusion-2-1-base",
-        torch_dtype=torch.float16,
-        variant="fp16",
-        local_files_only=True,
-    )
-
-    pipeline = pipeline.to(0)
-    pipeline.enable_model_cpu_offload()
-
-    generator_device = "cuda" if torch.cuda.is_available() else "cpu"
-    generator = torch.Generator(device=generator_device)
     image = pipeline(
         prompt="high quality, high resolution, indoor scene",
         negative_prompt="object",
@@ -428,6 +440,11 @@ if __name__ == "__main__":
 
     seed_everything(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    inpaint_pipeline = load_inpaint_pipeline(device=device)
+    inpaint_generator_device = getattr(
+        inpaint_pipeline, "_execution_device", device  # type: ignore[attr-defined]
+    )
+    inpaint_generator = torch.Generator(device=inpaint_generator_device)
 
     # collate_fn keeps types as numpy instead of torch and avoids adding a batch dim
     dataset: CSC2529Dataset = CSC2529Dataset(Path(args.dataset_base_dir))
@@ -498,7 +515,10 @@ if __name__ == "__main__":
             background_image, object_mask, bbox
         )
         background_image_cropped = remove_object(
-            background_image_cropped.copy(), object_mask_cropped.copy()
+            background_image_cropped.copy(),
+            object_mask_cropped.copy(),
+            inpaint_pipeline,
+            inpaint_generator,
         )
         background_image = uncrop_with_bbox(
             background_image_cropped, background_image, bbox
@@ -663,7 +683,6 @@ if __name__ == "__main__":
             timings=timings,
             sam_pipeline=sam_pipeline,
         )
-        print(metrics)
 
         with open(results_dir / "metrics.json", "w") as file:
             json.dump(metrics, file, indent=4)
