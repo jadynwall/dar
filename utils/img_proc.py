@@ -48,19 +48,23 @@ def calc_target_bbox_mask(
     image: npt.NDArray[np.uint8],
     source_object: npt.NDArray[np.uint8],
     target_px: npt.NDArray[np.uint8],
-    source_depth: float,
-    target_depth: float,
+    scale_factor: float,
 ) -> npt.NDArray[np.bool_]:
-    """Returns a mask with shape == image.shape with a box of True values of shape = source_object.shape
+    """Returns a mask with shape == image.shape with a bbox of True values of shape = source_object.shape
 
     The box is horizontally centered with the target_px and sits directly above it.
     The size of the box is scaled based on the depth.
     """
 
-    scale_factor = source_depth / target_depth
-    h, w = (np.array(source_object.shape[:2]) * scale_factor).astype(np.uint32)
+    # Use signed ints so negative offsets clamp correctly near image borders.
+    h, w = (np.array(source_object.shape[:2]) * scale_factor).astype(np.int64)
     tx, ty = target_px
     target_mask = np.zeros(image.shape[:2], dtype=np.bool_)
     b = 5  # buffer
-    target_mask[ty - h - b : ty + b, tx - w // 2 - b : tx + w // 2 + b] = True
+
+    bbox_top = max(0, int(ty - h - b))
+    bbox_bot = min(target_mask.shape[0], int(ty + b))
+    bbox_left = max(0, int(tx - w // 2 - b))
+    bbox_right = min(target_mask.shape[1], int(tx + w // 2 + b))
+    target_mask[bbox_top:bbox_bot, bbox_left:bbox_right] = True
     return target_mask

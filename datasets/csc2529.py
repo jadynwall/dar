@@ -183,6 +183,19 @@ def create_anydoor_collage(
     tar_box_yyxx = box_in_box(tar_box_yyxx, tar_box_yyxx_crop)
     y1, y2, x1, x2 = tar_box_yyxx
 
+    # Clamp the translated box to the cropped image to avoid negative/overflow
+    # indices when the square crop is smaller than the original target box.
+    crop_h, crop_w = cropped_bg_image.shape[:2]
+    y1 = max(0, y1)
+    x1 = max(0, x1)
+    y2 = min(crop_h, y2)
+    x2 = min(crop_w, x2)
+    if y2 <= y1:
+        y2 = min(crop_h, y1 + 1)
+    if x2 <= x1:
+        x2 = min(crop_w, x1 + 1)
+    tar_box_yyxx = (y1, y2, x1, x2)
+
     # collage
     obj_image_collage = cv2.resize(obj_image_collage, (x2 - x1, y2 - y1))
     obj_mask_compose = cv2.resize(obj_mask_compose.astype(np.uint8), (x2 - x1, y2 - y1))

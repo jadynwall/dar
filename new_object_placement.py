@@ -445,7 +445,7 @@ if __name__ == "__main__":
     os.makedirs(cache_dir, exist_ok=True)
 
     seed_everything(42)
-    
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     inpaint_pipeline = load_inpaint_pipeline(device=device)
     inpaint_generator_device = getattr(
@@ -475,7 +475,7 @@ if __name__ == "__main__":
             continue
         iter_start = time.perf_counter()
         timings: dict[str, float] = {}
-        
+
         # Create output directories
         results_dir = timestamped_results_dir / str(dataset_idx)
         debug_dir = results_dir / "debug"
@@ -544,8 +544,7 @@ if __name__ == "__main__":
             image=background_image,
             source_object=cropped_object_rgba,
             target_px=target_px,
-            source_depth=source_depth,
-            target_depth=target_depth,
+            scale_factor=scale_applied,
         )
 
         # Create AnyDoor collage (part of FeatGLaC implementation)
@@ -555,7 +554,12 @@ if __name__ == "__main__":
             object_mask=cropped_object_rgba[:, :, -1],
             target_bbox_mask=target_bbox_mask,
         )
+
         if args.debug:
+            cv2.imwrite(
+                str(debug_dir / "cropped_inpainted_result.png"),
+                cv2.cvtColor(background_image_cropped, cv2.COLOR_RGB2BGR),
+            )
             PILImageModule.fromarray(object_mask.astype(np.uint8) * 255, mode="L").save(
                 debug_dir / "object_mask.png"
             )
