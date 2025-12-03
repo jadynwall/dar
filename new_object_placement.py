@@ -136,10 +136,15 @@ def remove_object(
 ) -> npt.NDArray[np.uint8]:
     """Remove object from background image using inpainting."""
     sam_mask = object_mask.astype(np.uint8) * 255
+
+    # dilate binary mask to ensure full object coverage
     kernel = np.ones((10, 10), np.uint8)
     sam_mask = cv2.dilate(sam_mask.copy(), kernel, iterations=1)
+
+    # smooth mask edges for better inpainting results
     sam_mask = cv2.GaussianBlur(sam_mask.copy(), (5, 5), 0)
     sam_mask = cv2.dilate(sam_mask.copy(), kernel, iterations=1)
+
     mask_pil = PILImageModule.fromarray(sam_mask).convert("L")
     init_image = PILImageModule.fromarray(background_image)
 
@@ -160,10 +165,10 @@ def build_mpi_masks(
     device: torch.device,
     debug_dir: Path | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, list[npt.NDArray[np.uint8]]]:
-    """Generate background/foreground MPI masks along with the high-res originals."""
+    """Generate background/foreground Multi-Plane Image masks along with the high-res originals."""
 
     # Convert absolute depth to disparity so masks preserve the intended
-    # foreground/background ordering (larger disparity = closer).
+    # foreground/background ordering (larger disparity = closer to camera).
     depth_np = np.array(depth_image, dtype=np.float32)
     disparity_map = np.divide(
         1.0,
@@ -257,6 +262,7 @@ def inference_single_image(
     guidance_scale: float = 5.0,
     save_memory: bool = True,
 ) -> npt.NDArray[np.float64]:
+    """Use AnyDoor diffusion to inpaint object into the background image."""
     object_crop = alignment_result.object
     collage = alignment_result.collage
 
@@ -439,6 +445,7 @@ if __name__ == "__main__":
     os.makedirs(cache_dir, exist_ok=True)
 
     seed_everything(42)
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     inpaint_pipeline = load_inpaint_pipeline(device=device)
     inpaint_generator_device = getattr(
@@ -462,11 +469,13 @@ if __name__ == "__main__":
 
     filter_indices = set(args.sample_indexes) if args.sample_indexes else None
 
+    # Main inference loop
     for dataset_idx, background_image, source_px, target_px in loader:
         if filter_indices is not None and dataset_idx not in filter_indices:
             continue
         iter_start = time.perf_counter()
         timings: dict[str, float] = {}
+        
         # Create output directories
         results_dir = timestamped_results_dir / str(dataset_idx)
         debug_dir = results_dir / "debug"
@@ -487,7 +496,7 @@ if __name__ == "__main__":
         )
         timings["time_full_depth"] = time.perf_counter() - depth_start
 
-        # Draw the source and target point on the background image.
+        # Draw the source and target point on the background image
         if args.debug:
             pts_preview = draw_depth_pts(
                 background_image.copy(),
@@ -507,6 +516,7 @@ if __name__ == "__main__":
             print(f"Skipping sample {dataset_idx}: {e}")
             continue
 
+        # Extract RGBA object
         cropped_object_rgba = extract_masked_object(background_image, object_mask)
 
         # Remove object from image
@@ -538,6 +548,7 @@ if __name__ == "__main__":
             target_depth=target_depth,
         )
 
+        # Create AnyDoor collage (part of FeatGLaC implementation)
         anydoor_collage = create_anydoor_collage(
             bg_image=background_image,
             object_image=cropped_object_rgba[:, :, :3],
@@ -577,6 +588,7 @@ if __name__ == "__main__":
         )
         timings["time_scene_masks"] = time.perf_counter() - scene_masks_start
 
+        # Separate image into fg and bg (DeGLaD)
         mpi_start = time.perf_counter()
         (
             mpi_background_alpha,
@@ -594,9 +606,11 @@ if __name__ == "__main__":
         if args.skip_diffusion:
             continue
 
-        # Move Diffusion Handles to GPU for null-text inversion
+        # Null-text inversion to get latents and activations for diffusion
         null_text_start = time.perf_counter()
+        # Move Diffusion Handles to GPU for null-text inversion
         diff_handles.to(device)
+        # Skip null-text inversion if already cached
         null_text_cache_file = f"{cache_dir}/null_text_{dataset_idx}.pickle"
         try:
             with open(null_text_cache_file, "rb") as nti_pickle_file:
@@ -648,6 +662,7 @@ if __name__ == "__main__":
             "activation_fore": nti_result.activations,
         }
 
+        # Diffusion to inpaint object into scene
         diffusion_start = time.perf_counter()
         result_image = inference_single_image(
             mpi_data_dict=mpi_data_dict,
