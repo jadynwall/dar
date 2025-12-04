@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from datetime import datetime
 import torch
@@ -7,6 +8,12 @@ import numpy as np
 from PIL import Image
 from transformers import pipeline
 from diffusers import StableDiffusionInpaintPipeline
+
+# Allow running the script directly without installing the package.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from utils.img_proc import get_object_mask
 
 RESULTS_BASE_DIR = "results/remove_object/{}"
@@ -18,8 +25,7 @@ results_dir = timestamped_results_dir
 os.makedirs(results_dir)
 
 # load image
-# image_path = 'datasets/csc2529/background/0.png'
-image_path = "datasets/csc2529/background/1.png"
+image_path = "datasets/csc2529/background/0.png"
 init_image_bgr = cv2.imread(image_path)
 if init_image_bgr is None:
     raise FileNotFoundError(f"Image not found at {image_path}")

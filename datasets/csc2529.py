@@ -29,7 +29,7 @@ class CSC2529Dataset(Dataset[tuple[int, NPImage, NPPixel, NPPixel]]):
         self.object_dir = base_dir / "object"
         self.num_backgrounds = len(list(self.background_image_dir.glob("*.png")))
 
-        with open(base_dir / "depth.json") as depth_file:
+        with open(base_dir / "points.json") as depth_file:
             depth_json = json.load(depth_file)
             self.idx_to_pts: dict[int, tuple[NPPixel, NPPixel]] = {
                 int(idx): CSC2529Dataset.points_to_array(entry)

@@ -46,7 +46,7 @@ warnings.filterwarnings(
 )
 
 # Results are stored in a timestamped folder:
-RESULTS_BASE_DIR = "results/new_object_placement/{}"
+RESULTS_BASE_DIR = "results/object_placement/{}"
 
 
 def load_inpaint_pipeline(device: torch.device) -> AutoPipelineForInpainting:
