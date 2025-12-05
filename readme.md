@@ -11,9 +11,8 @@ This project stitches together depth estimation, SAM masking, Stable Diffusion i
    conda activate depthedit
    ```
    (The env installs this repo in editable mode via: `pip -e .`)
-3. Install the Hugging Face CLI and fetch model weights (~62GB):
+3. Fetch model weights (~62GB):
    ```bash
-   pip install -U "huggingface_hub[cli]"
    bash download_weights.sh
    ```
 4. Run scripts from the repo root, e.g.:
