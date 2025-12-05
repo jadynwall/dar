@@ -1,6 +1,10 @@
 #!/bin/bash
 
+set -euo pipefail
+
+mkdir -p weights
 cd weights
+
 # Downloading weights for depth anything model
 wget https://huggingface.co/spaces/LiheYoung/Depth-Anything/resolve/main/checkpoints_metric_depth/depth_anything_metric_depth_indoor.pt
 wget https://huggingface.co/spaces/LiheYoung/Depth-Anything/resolve/main/checkpoints/depth_anything_vitl14.pth

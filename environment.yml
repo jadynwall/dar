@@ -23,6 +23,7 @@ dependencies:
   - xz=5.4.5
   - zlib=1.2.13
   - pip:
+      - -e .
       - absl-py==2.0.0
       - accelerate==0.33.0
       - addict==2.4.0
@@ -171,6 +172,7 @@ dependencies:
       - torch==2.0.0
       - torchmetrics==0.6.0
       - torchvision==0.15.1
+      - torch_fidelity==0.3.0
       - tqdm==4.65.0
       - transformers==4.44.2
       - triton==2.0.0

@@ -154,5 +154,3 @@ dmypy.json
 # Terraform
 *.tfstate
 *.tfstate.*
-
-csc2529

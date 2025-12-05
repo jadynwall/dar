@@ -9,11 +9,6 @@ from PIL import Image
 from transformers import pipeline
 from diffusers import StableDiffusionInpaintPipeline
 
-# Allow running the script directly without installing the package.
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
 from utils.img_proc import get_object_mask
 
 RESULTS_BASE_DIR = "results/remove_object/{}"

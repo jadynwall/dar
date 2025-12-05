@@ -363,7 +363,7 @@ def inference_single_image(
 @attrs.define
 class NullTextInvertResults:
     ddim_latents: torch.Tensor
-    # Activations from the first diffusion inference pass (from layers 1-3 of the decoder of the UNet as a list with 3 entries).
+    # Activations from layers 1-3 of the decoder of the UNet as a list with 3 entries
     activations: list[torch.Tensor]
     latent_image: torch.Tensor
 
